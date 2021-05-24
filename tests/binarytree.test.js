@@ -21,6 +21,6 @@ for (var i = 0; i < 100000; i++) {
 console.log("Inserted nodes");
 
 // Search for the 500th indexed node
-console.log(binaryTree.findNode(binaryTree.data.nodes[500].key));
+console.log(binaryTree.findNode(binaryTree.data.nodes[50000].key));
 
 console.log("Found node");
