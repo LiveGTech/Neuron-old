@@ -8,6 +8,7 @@
 */
 
 const fs = require("fs");
+const sha256 = require("crypto-js/sha256");
 
 // Base structure class for use with other structures
 exports.Struct = class {
@@ -44,7 +45,7 @@ exports.Struct = class {
     }
 }
 
-// Used for storing/retrieving key-value information at best case O(log n) time complexity
+// Used for storing/retrieving indexable key-value information at best case O(log n) time complexity
 exports.BinaryTree = class extends exports.Struct {
     constructor(path) {
         super(path);
@@ -162,3 +163,149 @@ exports.BinaryTree = class extends exports.Struct {
         return 0;
     }
 }
+
+// Used for storing document data with revisions, such as with the case of collaborative document editing
+exports.StructuredJournal = class extends exports.Struct {
+    constructor(path) {
+        super(path);
+
+        this.data = {contents: {}, revisions: []};
+    }
+
+    loadFromFile() {
+        super.loadFromFile();
+
+        this.data.contents = this.data.contents || {};
+        this.data.revisions = this.data.revisions || [];
+    }
+
+    getRevision(index) {
+        if (index < 0) {
+            throw new TypeError("Revisions start at index 0");
+        }
+
+        if (index >= this.data.revisions.length) {
+            throw new ReferenceError("Revision does not exist this far");
+        }
+
+        this.lastAccess = new Date();
+
+        return this.data.revisions[index];
+    }
+
+    getAllRevisions() {
+        this.lastAccess = new Date();
+
+        return this.data.revisions;
+    }
+
+    getRevisionLength() {
+        this.lastAccess = new Date();
+
+        return this.data.revisions.length;
+    }
+
+    getLatestRevision() {
+        this.lastAccess = new Date();
+
+        return this.data.revisions[this.data.revisions.length - 1];
+    }
+
+    getRevisionContents(index) {
+        var revisionContents = {};
+
+        if (index < 0) {
+            throw new TypeError("Revisions start at index 0");
+        }
+
+        if (index >= this.data.revisions.length) {
+            throw new ReferenceError("Revision does not exist this far");
+        }
+
+        for (var i = 0; i < index; i++) {
+            var revisionSubitem = revisionContents;
+
+            for (var j = 0; j < this.data.revisions[i].path.length - 1; j++) {
+                var nextSubitem = revisionSubitem[this.data.revisions[i].path[j]];
+
+                if (nextSubitem == undefined) {
+                    nextSubitem = {};
+                }
+
+                revisionSubitem = nextSubitem;
+            }
+
+            revisionSubitem[this.data.revisions[i].path.length - 1] = this.data.revisions[i].data;
+        }
+
+        this.lastAccess = new Date();
+
+        return revisionContents;
+    }
+
+    getLatestRevisionContents() {
+        this.lastAccess = new Date();
+
+        return this.data.contents;
+    }
+
+    getRevisionsSince(date) {
+        var minimumTimestamp = date.getTime();
+        var revisions = [];
+
+        for (var i = this.data.revisions.length - 1; i >= 0; i--) {
+            if (this.data.revisions[i].timestamp >= minimumTimestamp) {
+                revisions.unshift(this.data.revisions[i]); // Inserting from reverse so that revisions are in chronological order
+            }
+        }
+
+        this.lastAccess = new Date();
+
+        return revisions;
+    }
+
+    getRevisionIndexAtDate(date) {
+        var futureTimestamp = date.getTime();
+
+        this.lastAccess = new Date();
+
+        for (var i = this.data.revisions.length - 1; i >= 0; i--) {
+            if (this.data.revisions[i].timestamp <= futureTimestamp) {
+                return i;
+            }
+        }
+
+        return null;
+    }
+
+    // `data` refers to document data, whereas `metadata` refers to revision info, such as author
+    addRevision(path, data, metadata) {
+        this.data.revisions.push({
+            path,
+            data,
+            metadata,
+            timestamp: new Date().getTime()
+        });
+
+        this.data.contents = this.getRevisionContents(thsi.data.revisions.length - 1);
+        this.data.revisions[this.data.revisions.length - 1].hash = sha256(JSON.stringify(this.data.contents)); // So client side can check if most recent changes have been applied
+
+        this.lastAccess = new Date();
+        this.unsavedChanges = true;
+    }
+
+    purgeRevisions() {
+        this.data.revisions = [];
+
+        this.lastAccess = new Date();
+        this.unsavedChanges = true;
+    }
+
+    restoreRevision(index) {
+        this.data.contents = this.getRevisionContents(index);
+        this.data.revisions = this.data.revisions.slice(0, index + 1);
+
+        this.lastAccess = new Date();
+        this.unsavedChanges = true;
+    }
+};

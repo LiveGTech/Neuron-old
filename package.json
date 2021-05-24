@@ -9,6 +9,7 @@
     },
     "dependencies": {
         "bson": "^4.3.0",
+        "crypto-js": "^4.0.0",
         "express": "^4.17.1",
         "mkdirp": "^1.0.4"
     }
