@@ -294,8 +294,15 @@ exports.StructuredJournal = class extends exports.Struct {
         this.unsavedChanges = true;
     }
 
-    purgeRevisions() {
-        this.data.revisions = [];
+    purgeRevisions(metadata = {}) {
+        this.data.revisions = [{
+            path: [],
+            data: this.data.contents,
+            metadata,
+            timestamp: new Date().getTime()
+        }];
+
+        this.data.revisions[0].hash = sha256(JSON.stringify(this.data.contents)); // So client side can verify revision
 
         this.lastAccess = new Date();
         this.unsavedChanges = true;
