@@ -10,6 +10,8 @@
 const fs = require("fs");
 const sha256 = require("crypto-js/sha256");
 
+var common = require("./common");
+
 // Base structure class for use with other structures
 exports.Struct = class {
     constructor(path = null) {
@@ -222,20 +224,14 @@ exports.StructuredJournal = class extends exports.Struct {
             throw new ReferenceError("Revision does not exist this far");
         }
 
-        for (var i = 0; i < index; i++) {
-            var revisionSubitem = revisionContents;
+        for (var i = 0; i <= index; i++) {
+            if (this.data.revisions[i].path.length == 0) {
+                revisionContents = this.data.revisions[i].data;
 
-            for (var j = 0; j < this.data.revisions[i].path.length - 1; j++) {
-                var nextSubitem = revisionSubitem[this.data.revisions[i].path[j]];
-
-                if (nextSubitem == undefined) {
-                    nextSubitem = {};
-                }
-
-                revisionSubitem = nextSubitem;
+                continue;
             }
 
-            revisionSubitem[this.data.revisions[i].path.length - 1] = this.data.revisions[i].data;
+            common.mutateByIndexPath(revisionContents, this.data.revisions[i].path, this.data.revisions[i].data);
         }
 
         this.lastAccess = new Date();
@@ -287,8 +283,8 @@ exports.StructuredJournal = class extends exports.Struct {
             timestamp: new Date().getTime()
         });
 
-        this.data.contents = this.getRevisionContents(thsi.data.revisions.length - 1);
-        this.data.revisions[this.data.revisions.length - 1].hash = sha256(JSON.stringify(this.data.contents)); // So client side can check if most recent changes have been applied
+        this.data.contents = this.getRevisionContents(this.data.revisions.length - 1);
+        this.data.revisions[this.data.revisions.length - 1].hash = sha256(JSON.stringify(this.data.contents)).toString(); // So client side can check if most recent changes have been applied
 
         this.lastAccess = new Date();
         this.unsavedChanges = true;
@@ -302,7 +298,7 @@ exports.StructuredJournal = class extends exports.Struct {
             timestamp: new Date().getTime()
         }];
 
-        this.data.revisions[0].hash = sha256(JSON.stringify(this.data.contents)); // So client side can verify revision
+        this.data.revisions[0].hash = sha256(JSON.stringify(this.data.contents)).toString(); // So client side can verify revision
 
         this.lastAccess = new Date();
         this.unsavedChanges = true;
