@@ -1,5 +1,6 @@
 {
     "port": 8080,
     "identityStorage": "./storage/identity",
-    "bucketStorage": "./storage/bucket"
+    "bucketStorage": "./storage/bucket",
+    "sharedStorage": "./storage/shared"
 }
