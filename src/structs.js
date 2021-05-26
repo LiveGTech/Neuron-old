@@ -45,6 +45,10 @@ exports.Struct = class {
 
         this.unsavedChanges = false;
     }
+
+    calculateSize() {
+        return BSON.serialize(this.data).length;
+    }
 }
 
 // Used for storing/retrieving indexable key-value information at best case O(log n) time complexity
