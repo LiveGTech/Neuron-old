@@ -20,7 +20,8 @@ exports.requestRetrievalState = {
     UNFULFILLED: 0,
     INITIAL_INFO_RECEIVED: 1,
     TX_IN_PROGRESS: 2,
-    FULFILLED: 3
+    FULFILLED: 3,
+    ERR_NONEXISTENT: -1
 };
 
 exports.evictFiles = function(spaceToReserve) {
@@ -36,7 +37,8 @@ exports.evictFiles = function(spaceToReserve) {
     }
 };
 
-exports.requestFile = function(path) {
+// Use `txCallback` callback for directly streaming data to a client
+exports.requestFile = function(path, txCallback = function() {}) {
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
         if (exports.cachedFiles[i].path == path) {
             return Promise.resolve(exports.cachedFiles[i]);
@@ -58,13 +60,46 @@ exports.requestFile = function(path) {
     };
 
     request.promise = new Promise(function(resolve, reject) {
+        var lastBytesTransferred = 0;
+
         setInterval(function requestStatePoller() {
+            if (request.bytesTransferred != lastBytesTransferred) {
+                txCallback(request);
+
+                lastBytesTransferred = request.bytesTransferred;
+            }
+
             if (request.state == exports.requestRetrievalState.FULFILLED) {
-                clearImmediate(requestStatePoller);
-                resolve();
+                clearInterval(requestStatePoller);
+                resolve(request);
+
+                return;
+            }
+
+            if (request.state == exports.requestRetrievalState.ERR_NONEXISTENT) {
+                clearInterval(requestStatePoller);
+                reject(request);
+
+                return;
             }
         });
     });
 
     exports.filePathsToRequest.push(request);
+
+    return request.promise;
+};
+
+exports.cacheFile = function(path, size) {
+    exports.evictFiles(size);
+
+    for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
+        if (exports.cachedFiles[i].path == path) {
+            exports.cachedFiles.splice(i);
+
+            break;
+        }
+    }
+
+    exports.cachedFiles.push({path, size});
 };

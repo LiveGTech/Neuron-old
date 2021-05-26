@@ -58,3 +58,39 @@ exports.init = function(file = CONFIG_PATH) {
 
     exports.load(file);
 };
+
+exports.resolvePath = function(path) {
+    if (path.split(":").length < 2) {
+        throw new TypeError("Path must be constructed of bucket identifier and location");
+    }
+
+    if (path.split(":")[0] == "identity") {
+        var absolutePath = path.resolve(__dirname, exports.data.identityStorage, path.split(":")[1]);
+
+        if (!absolutePath.startsWith(exports.data.identityStorage)) {
+            throw new ReferenceError("Cannot get path outside of bucket");
+        }
+
+        return absolutePath;
+    }
+
+    if (path.split(":")[0] == "bucket") {
+        var absolutePath = path.resolve(__dirname, exports.data.bucketStorage, path.split(":")[1]);
+
+        if (!absolutePath.startsWith(exports.data.bucketStorage)) {
+            throw new ReferenceError("Cannot get path outside of bucket");
+        }
+
+        return absolutePath;
+    }
+
+    if (path.split(":")[0] == "shared") {
+        var absolutePath = path.resolve(__dirname, exports.data.sharedStorage, path.split(":")[1]);
+
+        if (!absolutePath.startsWith(exports.data.sharedStorage)) {
+            throw new ReferenceError("Cannot get path outside of bucket");
+        }
+
+        return absolutePath;
+    }
+};
