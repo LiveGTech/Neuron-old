@@ -11,6 +11,7 @@ const fs = require("fs");
 const sha256 = require("crypto-js/sha256");
 
 var common = require("./common");
+var config = require("./config");
 
 // Base structure class for use with other structures
 exports.Struct = class {
@@ -27,7 +28,7 @@ exports.Struct = class {
             return;
         }
 
-        var contents = fs.readFileSync(this.path);
+        var contents = fs.readFileSync(config.resolvePath(this.path));
 
         this.data = BSON.deserialize(contents);
         this.lastAccess = new Date();
@@ -41,7 +42,7 @@ exports.Struct = class {
 
         var contents = BSON.serialize(this.data);
 
-        fs.writeFileSync(this.path, contents);
+        fs.writeFileSync(config.resolvePath(this.path), contents);
 
         this.unsavedChanges = false;
     }

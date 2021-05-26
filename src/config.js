@@ -14,6 +14,9 @@ const path = require("path");
 
 const CONFIG_PATH = path.join(os.homedir(), ".config", "neuron", "config.json");
 const CONFIG_DEFAULT_PATH = path.join(__dirname, "..", "defaultconfig.json");
+const CONFIG_DEFAULT_IDENTITY_PATH = "./storage/identity";
+const CONFIG_DEFAULT_BUCKET_PATH = "./storage/bucket";
+const CONFIG_DEFAULT_SHARED_PATH = "./storage/shared";
 
 exports.data = {};
 
@@ -59,35 +62,35 @@ exports.init = function(file = CONFIG_PATH) {
     exports.load(file);
 };
 
-exports.resolvePath = function(path) {
-    if (path.split(":").length < 2) {
+exports.resolvePath = function(bucketPath) {
+    if (bucketPath.split(":").length < 2) {
         throw new TypeError("Path must be constructed of bucket identifier and location");
     }
 
-    if (path.split(":")[0] == "identity") {
-        var absolutePath = path.resolve(__dirname, exports.data.identityStorage, path.split(":")[1]);
+    if (bucketPath.split(":")[0] == "identity") {
+        var absolutePath = path.resolve(__dirname, exports.data.identityStorage || CONFIG_DEFAULT_IDENTITY_PATH, bucketPath.split(":")[1]);
 
-        if (!absolutePath.startsWith(exports.data.identityStorage)) {
+        if (!absolutePath.startsWith(path.resolve(__dirname, exports.data.identityStorage || CONFIG_DEFAULT_IDENTITY_PATH))) {
             throw new ReferenceError("Cannot get path outside of bucket");
         }
 
         return absolutePath;
     }
 
-    if (path.split(":")[0] == "bucket") {
-        var absolutePath = path.resolve(__dirname, exports.data.bucketStorage, path.split(":")[1]);
+    if (bucketPath.split(":")[0] == "bucket") {
+        var absolutePath = path.resolve(__dirname, exports.data.bucketStorage || CONFIG_DEFAULT_BUCKET_PATH, bucketPath.split(":")[1]);
 
-        if (!absolutePath.startsWith(exports.data.bucketStorage)) {
+        if (!absolutePath.startsWith(path.resolve(__dirname, exports.data.bucketStorage || CONFIG_DEFAULT_BUCKET_PATH))) {
             throw new ReferenceError("Cannot get path outside of bucket");
         }
 
         return absolutePath;
     }
 
-    if (path.split(":")[0] == "shared") {
-        var absolutePath = path.resolve(__dirname, exports.data.sharedStorage, path.split(":")[1]);
+    if (bucketPath.split(":")[0] == "shared") {
+        var absolutePath = path.resolve(__dirname, exports.data.sharedStorage || CONFIG_DEFAULT_SHARED_PATH, bucketPath.split(":")[1]);
 
-        if (!absolutePath.startsWith(exports.data.sharedStorage)) {
+        if (!absolutePath.startsWith(path.resolve(__dirname, exports.data.sharedStorage || CONFIG_DEFAULT_SHARED_PATH))) {
             throw new ReferenceError("Cannot get path outside of bucket");
         }
 

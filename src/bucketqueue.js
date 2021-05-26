@@ -7,13 +7,16 @@
     Licensed by the LiveG Open-Source Licence, which can be found at LICENCE.md.
 */
 
+const fs = require("fs");
+
 var config = require("./config");
 
 const MAX_BUCKET_CACHE_SIZE = config.data.maxBucketCacheSize || 8589934592; // 8 GiB default
+const QUEUE_PATH = config.resolvePath("identity:queue.bson");
 
 exports.cachedFiles = [];
 exports.cachedSize = 0;
-exports.filesToCommit = [];
+exports.fileCommitQueue = [];
 exports.filePathsToRequest = [];
 
 exports.requestRetrievalState = {
@@ -24,6 +27,7 @@ exports.requestRetrievalState = {
     ERR_NONEXISTENT: -1
 };
 
+// Called when space is needed, and so files in cache need to be evicted
 exports.evictFiles = function(spaceToReserve) {
     while (exports.cachedFiles.length > 0) {
         if (exports.cachedSize < MAX_BUCKET_CACHE_SIZE - spaceToReserve) {
@@ -31,10 +35,17 @@ exports.evictFiles = function(spaceToReserve) {
         }
 
         exports.cachedSize -= exports.cachedFiles[0].size;
-        exports.filesToCommit = exports.filesToCommit.filter((i) => i.path != exports.cachedFiles[0].path);
+        exports.fileCommitQueue = exports.fileCommitQueue.filter((i) => i.path != exports.cachedFiles[0].path);
 
-        exports.filesToCommit.push(exports.cachedFiles.shift());
+        exports.fileCommitQueue.push(exports.cachedFiles.shift());
     }
+};
+
+// Called when the first file which has been committed to cold storage is no longer needed in cache
+exports.dequeueFirstCommittedFile = function() {
+    var committedFile = exports.fileCommitQueue.shift();
+
+    fs.rmSync(config.resolvePath(committedFile.path));
 };
 
 // Use `txCallback` callback for directly streaming data to a client
@@ -90,6 +101,7 @@ exports.requestFile = function(path, txCallback = function() {}) {
     return request.promise;
 };
 
+// Used to register files which have been saved to cache storage but not yet registered
 exports.cacheFile = function(path, size) {
     exports.evictFiles(size);
 
@@ -102,4 +114,24 @@ exports.cacheFile = function(path, size) {
     }
 
     exports.cachedFiles.push({path, size});
+};
+
+exports.load = function() {
+    if (!fs.existsSync(QUEUE_PATH)) {
+        return; // No queue yet, so start with an empty one
+    }
+
+    var contents = BSON.deseralise(fs.readFileSync(QUEUE_PATH));
+
+    exports.cachedFiles = contents.cachedFiles;
+    exports.fileCommitQueue = contents.fileCommitQueue;
+};
+
+exports.save = function() {
+    var contents = {};
+
+    contents.cachedFiles = exports.cachedFiles;
+    contents.fileCommitQueue = exports.fileCommitQueue;
+
+    fs.writeFileSync(QUEUE_PATH, contents);
 };
