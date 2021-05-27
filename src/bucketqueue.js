@@ -12,11 +12,13 @@ const fs = require("fs");
 var config = require("./config");
 
 const MAX_BUCKET_CACHE_SIZE = config.data.maxBucketCacheSize || 8589934592; // 8 GiB default
+const MAX_EVICTION_QUEUE_TIME = 10000;
 const QUEUE_PATH = config.resolvePath("identity:queue.bson");
 
 exports.cachedFiles = [];
 exports.cachedSize = 0;
 exports.fileCommitQueue = [];
+exports.fileCommitQueueMinimumTime = 0;
 exports.fileDeleteQueue = [];
 exports.filesToRequest = [];
 
@@ -38,8 +40,24 @@ exports.evictFiles = function(spaceToReserve) {
         exports.cachedSize -= exports.cachedFiles[0].size;
         exports.fileCommitQueue = exports.fileCommitQueue.filter((i) => i.path != exports.cachedFiles[0].path);
 
+        exports.cachedFiles[0].alreadyCommittedOnce = false;
+        exports.cachedFiles[0].timestamp = new Date().getTime();
+
         exports.fileCommitQueue.push(exports.cachedFiles.shift());
     }
+
+    for (var i = 0; i < exports.fileCommitQueue.length; i++) {
+        if (exports.fileCommitQueue[i].alreadyCommittedOnce && exports.fileCommitQueue[i].timestamp < new Date().getTime() - MAX_EVICTION_QUEUE_TIME) {
+            if (fs.existsSync(config.resolvePath(exports.fileCommitQueue[i].path))) {
+                fs.rmSync(config.resolvePath(exports.fileCommitQueue[i].path));
+            }
+
+            exports.fileCommitQueueMinimumTime = exports.fileCommitQueue[i].timestamp; // So long as storage device has files newer than this time, they're working
+            exports.fileCommitQueue[i] = null; // Remove if certain that all storage devices have committed this file
+        }
+    }
+
+    exports.fileCommitQueue = exports.fileCommitQueue.filter((i) => i != null);
 };
 
 exports.deleteFile = function(path, size) {
@@ -168,6 +186,7 @@ exports.load = function() {
     exports.cachedFiles = contents.cachedFiles;
     exports.cachedSize = contents.cachedSize;
     exports.fileCommitQueue = contents.fileCommitQueue;
+    exports.fileCommitQueueMinimumTime = contents.fileCommitQueueMinimumTime;
     exports.fileDeleteQueue = contents.fileDeleteQueue;
 };
 
@@ -177,6 +196,7 @@ exports.save = function() {
     contents.cachedFiles = exports.cachedFiles;
     contents.cachedSize = exports.cachedSize;
     contents.fileCommitQueue = exports.fileCommitQueue;
+    contents.fileCommitQueueMinimumTime = exports.fileCommitQueueMinimumTime;
     contents.fileDeleteQueue = exports.fileDeleteQueue;
 
     fs.writeFileSync(QUEUE_PATH, contents);
