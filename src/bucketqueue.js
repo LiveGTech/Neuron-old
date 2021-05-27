@@ -17,7 +17,7 @@ const QUEUE_PATH = config.resolvePath("identity:queue.bson");
 exports.cachedFiles = [];
 exports.cachedSize = 0;
 exports.fileCommitQueue = [];
-exports.filePathsToRequest = [];
+exports.filesToRequest = [];
 
 exports.requestRetrievalState = {
     UNFULFILLED: 0,
@@ -56,9 +56,9 @@ exports.requestFile = function(path, txCallback = function() {}) {
         }
     }
 
-    for (var i = 0; i < exports.filePathsToRequest; i++) {
-        if (exports.filePathsToRequest[i].path == path) {
-            return exports.filePathsToRequest[i].promise;
+    for (var i = 0; i < exports.filesToRequest; i++) {
+        if (exports.filesToRequest[i].path == path) {
+            return exports.filesToRequest[i].promise;
         }
     }
 
@@ -73,22 +73,33 @@ exports.requestFile = function(path, txCallback = function() {}) {
     request.promise = new Promise(function(resolve, reject) {
         var lastBytesTransferred = 0;
 
-        setInterval(function requestStatePoller() {
+        var requestStatePoller = setInterval(function() {
             if (request.bytesTransferred != lastBytesTransferred) {
                 txCallback(request);
 
                 lastBytesTransferred = request.bytesTransferred;
             }
 
-            if (request.state == exports.requestRetrievalState.FULFILLED) {
+            if ([
+                exports.requestRetrievalState.FULFILLED,
+                exports.requestRetrievalState.ERR_NONEXISTENT
+            ].includes(request.state)) {
                 clearInterval(requestStatePoller);
+
+                var requestIndex = exports.filesToRequest.indexOf(request);
+
+                if (requestIndex >= 0) {
+                    exports.filesToRequest.splice(requestIndex, 1);
+                }
+            }
+
+            if (request.state == exports.requestRetrievalState.FULFILLED) {
                 resolve(request);
 
                 return;
             }
 
             if (request.state == exports.requestRetrievalState.ERR_NONEXISTENT) {
-                clearInterval(requestStatePoller);
                 reject(request);
 
                 return;
@@ -96,7 +107,7 @@ exports.requestFile = function(path, txCallback = function() {}) {
         });
     });
 
-    exports.filePathsToRequest.push(request);
+    exports.filesToRequest.push(request);
 
     return request.promise;
 };
