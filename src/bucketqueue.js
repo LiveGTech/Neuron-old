@@ -94,6 +94,7 @@ exports.requestFile = function(path, txCallback = function() {}) {
             }
 
             if (request.state == exports.requestRetrievalState.FULFILLED) {
+                fs.writeFileSync(config.resolvePath(path), request.data);
                 resolve(request);
 
                 return;
