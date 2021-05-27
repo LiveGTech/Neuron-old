@@ -17,6 +17,7 @@ const QUEUE_PATH = config.resolvePath("identity:queue.bson");
 exports.cachedFiles = [];
 exports.cachedSize = 0;
 exports.fileCommitQueue = [];
+exports.fileDeleteQueue = [];
 exports.filesToRequest = [];
 
 exports.requestRetrievalState = {
@@ -41,18 +42,39 @@ exports.evictFiles = function(spaceToReserve) {
     }
 };
 
-// Called when the first file which has been committed to cold storage is no longer needed in cache
-exports.dequeueFirstCommittedFile = function() {
-    var committedFile = exports.fileCommitQueue.shift();
+exports.deleteFile = function(path, size) {
+    for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
+        if (exports.cachedFiles[i].path == path) {
+            exports.cachedFiles.splice(i);
 
-    fs.rmSync(config.resolvePath(committedFile.path));
+            break;
+        }
+    }
+
+    exports.fileDeleteQueue.push({
+        path,
+        size,
+        timestamp: new Date().getTime
+    });
 };
 
 // Use `txCallback` callback for directly streaming data to a client
 exports.requestFile = function(path, txCallback = function() {}) {
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
         if (exports.cachedFiles[i].path == path) {
-            return Promise.resolve(exports.cachedFiles[i]);
+            var fileContents = fs.readFileSync(config.resolvePath(path));
+
+            var request = {
+                ...exports.cachedFiles[i],
+                state: exports.requestRetrievalState.FULFILLED,
+                bytesTransferred: fileContents.length,
+                bytesTotal: fileContents.length,
+                data: fileContents
+            };
+
+            txCallback(request);
+
+            return Promise.resolve(request);
         }
     }
 
@@ -71,7 +93,7 @@ exports.requestFile = function(path, txCallback = function() {}) {
     };
 
     request.promise = new Promise(function(resolve, reject) {
-        var lastBytesTransferred = 0;
+        var lastBytesTransferred = null; // Initial callback will give file tx info but no data
 
         var requestStatePoller = setInterval(function() {
             if (request.bytesTransferred != lastBytesTransferred) {
@@ -95,6 +117,8 @@ exports.requestFile = function(path, txCallback = function() {}) {
 
             if (request.state == exports.requestRetrievalState.FULFILLED) {
                 fs.writeFileSync(config.resolvePath(path), request.data);
+                exports.cacheFile(path, request.data.length);
+
                 resolve(request);
 
                 return;
@@ -125,7 +149,13 @@ exports.cacheFile = function(path, size) {
         }
     }
 
-    exports.cachedFiles.push({path, size});
+    exports.cachedFiles.push({
+        path,
+        size,
+        timestamp: new Date().getTime
+    });
+
+    exports.cachedSize += request.bytesTotal;
 };
 
 exports.load = function() {
@@ -136,14 +166,18 @@ exports.load = function() {
     var contents = BSON.deseralise(fs.readFileSync(QUEUE_PATH));
 
     exports.cachedFiles = contents.cachedFiles;
+    exports.cachedSize = contents.cachedSize;
     exports.fileCommitQueue = contents.fileCommitQueue;
+    exports.fileDeleteQueue = contents.fileDeleteQueue;
 };
 
 exports.save = function() {
     var contents = {};
 
     contents.cachedFiles = exports.cachedFiles;
+    contents.cachedSize = exports.cachedSize;
     contents.fileCommitQueue = exports.fileCommitQueue;
+    contents.fileDeleteQueue = exports.fileDeleteQueue;
 
     fs.writeFileSync(QUEUE_PATH, contents);
 };
