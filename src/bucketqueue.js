@@ -11,23 +11,24 @@ const fs = require("fs");
 
 var config = require("./config");
 
-const MAX_BUCKET_CACHE_SIZE = config.data.maxBucketCacheSize || 8589934592; // 8 GiB default
-const MAX_EVICTION_QUEUE_TIME = 10000;
+const MAX_BUCKET_CACHE_SIZE = config.data.maxBucketCacheSize || 8 * 1024 * 1024 * 1024; // 8 GiB default
+const MAX_EVICTION_QUEUE_TIME = config.data.maxEvictionQueueTime || 60 * 60 * 1000; // 1 hr default
+const REQUEST_TIMEOUT = 10 * 1000; // 10 secs default
 const QUEUE_PATH = config.resolvePath("identity:queue.bson");
 
 exports.cachedFiles = [];
 exports.cachedSize = 0;
 exports.fileCommitQueue = [];
-exports.fileCommitQueueMinimumTime = 0;
 exports.fileDeleteQueue = [];
 exports.filesToRequest = [];
+exports.queueMinTimestamp = 0;
 
 exports.requestRetrievalState = {
     UNFULFILLED: 0,
     INITIAL_INFO_RECEIVED: 1,
     TX_IN_PROGRESS: 2,
     FULFILLED: 3,
-    ERR_NONEXISTENT: -1
+    ERR_NOT_FOUND: -1
 };
 
 // Called when space is needed, and so files in cache need to be evicted
@@ -52,8 +53,8 @@ exports.evictFiles = function(spaceToReserve) {
                 fs.rmSync(config.resolvePath(exports.fileCommitQueue[i].path));
             }
 
-            exports.fileCommitQueueMinimumTime = exports.fileCommitQueue[i].timestamp; // So long as storage device has files newer than this time, they're working
-            exports.fileCommitQueue[i] = null; // Remove if certain that all storage devices have committed this file
+            exports.queueMinTimestamp = exports.fileCommitQueue[i].timestamp; // So long as storage node has files newer than this time, they're working
+            exports.fileCommitQueue[i] = null; // Remove if certain that all storage nodes have committed this file
         }
     }
 
@@ -74,6 +75,15 @@ exports.deleteFile = function(path, size) {
         size,
         timestamp: new Date().getTime
     });
+
+    for (var i = 0; i < exports.fileDeleteQueue.length; i++) {
+        if (exports.fileDeleteQueue[i].alreadyCommittedOnce && exports.fileDeleteQueue[i].timestamp < new Date().getTime() - MAX_EVICTION_QUEUE_TIME) {
+            exports.queueMinTimestamp = exports.fileDeleteQueue[i].timestamp; // So long as storage node has files newer than this time, they're working
+            exports.fileDeleteQueue[i] = null; // Remove if certain that all storage nodes have committed this file
+        }
+    }
+
+    exports.fileDeleteQueue = exports.fileDeleteQueue.filter((i) => i != null);
 };
 
 // Use `txCallback` callback for directly streaming data to a client
@@ -104,6 +114,7 @@ exports.requestFile = function(path, txCallback = function() {}) {
 
     var request = {
         path,
+        timestamp: new Date().getTime,
         state: exports.requestRetrievalState.UNFULFILLED,
         bytesTransferred: 0,
         bytesTotal: null,
@@ -112,21 +123,30 @@ exports.requestFile = function(path, txCallback = function() {}) {
 
     request.promise = new Promise(function(resolve, reject) {
         var lastBytesTransferred = null; // Initial callback will give file tx info but no data
+        var lastTransferTime = new Date();
 
         var requestStatePoller = setInterval(function() {
+            var requestIndex = exports.filesToRequest.indexOf(request);
+
+            if (lastTransferTime.getTime() < new Date().getTime() - REQUEST_TIMEOUT) {
+                request.state = exports.requestRetrievalState.ERR_NOT_FOUND; // No response, so mark as not found
+            }
+
             if (request.bytesTransferred != lastBytesTransferred) {
-                txCallback(request);
+                if (txCallback(request)) {
+                    request.state = exports.requestRetrievalState.FULFILLED; // Callback wants to cancel tx, so mark it as fulfilled
+                }
 
                 lastBytesTransferred = request.bytesTransferred;
+
+                lastTransferTime = new Date(); // Data received, so update last transfer time
             }
 
             if ([
                 exports.requestRetrievalState.FULFILLED,
-                exports.requestRetrievalState.ERR_NONEXISTENT
+                exports.requestRetrievalState.ERR_NOT_FOUND
             ].includes(request.state)) {
                 clearInterval(requestStatePoller);
-
-                var requestIndex = exports.filesToRequest.indexOf(request);
 
                 if (requestIndex >= 0) {
                     exports.filesToRequest.splice(requestIndex, 1);
@@ -142,7 +162,7 @@ exports.requestFile = function(path, txCallback = function() {}) {
                 return;
             }
 
-            if (request.state == exports.requestRetrievalState.ERR_NONEXISTENT) {
+            if (request.state == exports.requestRetrievalState.ERR_NOT_FOUND) {
                 reject(request);
 
                 return;
@@ -186,7 +206,7 @@ exports.load = function() {
     exports.cachedFiles = contents.cachedFiles;
     exports.cachedSize = contents.cachedSize;
     exports.fileCommitQueue = contents.fileCommitQueue;
-    exports.fileCommitQueueMinimumTime = contents.fileCommitQueueMinimumTime;
+    exports.queueMinTimestamp = contents.fileCommitQueueMinimumTime;
     exports.fileDeleteQueue = contents.fileDeleteQueue;
 };
 
@@ -196,8 +216,122 @@ exports.save = function() {
     contents.cachedFiles = exports.cachedFiles;
     contents.cachedSize = exports.cachedSize;
     contents.fileCommitQueue = exports.fileCommitQueue;
-    contents.fileCommitQueueMinimumTime = exports.fileCommitQueueMinimumTime;
+    contents.fileCommitQueueMinimumTime = exports.queueMinTimestamp;
     contents.fileDeleteQueue = exports.fileDeleteQueue;
 
     fs.writeFileSync(QUEUE_PATH, contents);
+};
+
+exports.mergeQueues = function() {
+    var mergedQueue = [];
+
+    for (var i = 0; i < fileCommitQueue.length; i++) {
+        mergedQueue.push({
+            type: "commit",
+            path: fileCommitQueue[i].path,
+            timestamp: fileCommitQueue[i].timestamp
+        });
+    }
+
+    for (var i = 0; i < fileDeleteQueue.length; i++) {
+        mergedQueue.push({
+            type: "delete",
+            path: fileDeleteQueue[i].path,
+            timestamp: fileDeleteQueue[i].timestamp
+        });
+    }
+
+    for (var i = 0; i < filesToRequest.length; i++) {
+        mergedQueue.push({
+            type: "request",
+            path: filesToRequest[i].path,
+            timestamp: filesToRequest[i].timestamp,
+            initialised: filesToRequest[i].state == exports.requestRetrievalState.INITIAL_INFO_RECEIVED,
+            bytesTransferred: filesToRequest[i].bytesTransferred
+        });
+    }
+
+    return mergedQueue;
+};
+
+exports.getFromQueueAtTimestamp = function(queue, timestamp) {
+    for (var i = 0; i < queue.length; i++) {
+        if (queue[i].timestamp == timestamp) {
+            return queue[i];
+        }
+    }
+
+    return null; // May already have been performed
+};
+
+exports.resolveCommit = function(timestamp) {
+    var item = exports.getFromQueueAtTimestamp(fileCommitQueue, timestamp);
+
+    if (item == null) {
+        return; // Has been since removed
+    }
+
+    item.alreadyCommittedOnce = true;
+};
+
+exports.resolveDelete = function(timestamp) {
+    var item = exports.getFromQueueAtTimestamp(fileDeleteQueue, timestamp);
+
+    if (item == null) {
+        return; // Has been since removed
+    }
+
+    item.alreadyCommittedOnce = true;
+};
+
+exports.initRequest = function(timestamp, info) {
+    var item = exports.getFromQueueAtTimestamp(filesToRequest, timestamp);
+
+    if (item == null) {
+        return; // Has been since resolved, possibly by another storage node
+    }
+
+    if (item.state != exports.requestRetrievalState.UNFULFILLED) {
+        return; // Already being transferred, possibly by another storage node
+    }
+
+    item.state = exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
+    item.bytesTotal = info.bytesTotal;
+    item.data = new ArrayBuffer(info.bytesTotal);
+};
+
+exports.txRequestData = function(timestamp, dataChunk, previousBytesTransferred) {
+    var item = exports.getFromQueueAtTimestamp(filesToRequest, timestamp);
+
+    if (item == null) {
+        return; // Has been since resolved, possibly by another storage node
+    }
+
+    if (![
+        exports.requestRetrievalState.INITIAL_INFO_RECEIVED,
+        exports.requestRetrievalState.TX_IN_PROGRESS
+    ].includes(item.state) || item.bytesTransferred != previousBytesTransferred) {
+        return; // Another storage node may be at a different transfer point
+    }
+
+    for (var i = 0; i < dataChunk.length; i++) {
+        item.data[previousBytesTransferred + i] = dataChunk[i];
+    }
+
+    item.bytesTransferred += dataChunk.length;
+
+    if (item.bytesTransferred >= item.bytesTotal) {
+        item.state = exports.requestRetrievalState.FULFILLED;
+        item.bytesTotal = item.bytesTransferred;
+    }
+};
+
+exports.txRequestMarkNotFound = function(timestamp) {
+    var item = exports.getFromQueueAtTimestamp(filesToRequest, timestamp);
+
+    if (item == null) {
+        return; // Has been since resolved, possibly by another storage node
+    }
+
+    item.state = exports.requestRetrievalState.ERR_NOT_FOUND;
 };
