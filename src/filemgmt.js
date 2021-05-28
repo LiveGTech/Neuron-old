@@ -13,6 +13,8 @@
 */
 
 const fs = require("fs");
+const path = require("path");
+const mkdirp = require("mkdirp");
 
 var config = require("./config");
 var bucketQueue = require("./bucketqueue");
@@ -20,9 +22,9 @@ var structs = require("./structs");
 
 const NO_CACHE_BUCKETS = ["identity"];
 
-function shouldBeCached(path) {
+function shouldBeCached(filePath) {
     for (var i = 0; i < NO_CACHE_BUCKETS.length; i++) {
-        if (path.startsWith(NO_CACHE_BUCKETS[i] + ":")) {
+        if (filePath.startsWith(NO_CACHE_BUCKETS[i] + ":")) {
             return false;
         }
     }
@@ -31,16 +33,16 @@ function shouldBeCached(path) {
 }
 
 // Works for struct too
-exports.checkFileExists = function(path) {
-    if (!shouldBeCached(path)) {
-        if (fs.existsSync(config.resolvePath(path))) {
+exports.checkFileExists = function(filePath) {
+    if (!shouldBeCached(filePath)) {
+        if (fs.existsSync(config.resolvePath(filePath))) {
             return Promise.resolve();
         } else {
             return Promise.reject();
         }
     }
 
-    return bucketQueue.requestFile(path, function() {
+    return bucketQueue.requestFile(filePath, function() {
         return true; // Immediately cancel request since we're looking to check if it exists only
     }).then(function(request) {
         if (request.state == bucketQueue.requestRetrievalState.ERR_NOT_FOUND) {
@@ -51,27 +53,27 @@ exports.checkFileExists = function(path) {
     });
 };
 
-exports.loadFile = function(path) {
-    if (!shouldBeCached(path)) {
-        return Promise.resolve(fs.readFileSync(config.resolvePath(path)));
+exports.loadFile = function(filePath) {
+    if (!shouldBeCached(filePath)) {
+        return Promise.resolve(fs.readFileSync(config.resolvePath(filePath)));
     }
 
-    return bucketQueue.requestFile(path).then(function(request) {
+    return bucketQueue.requestFile(filePath).then(function(request) {
         return Promise.resolve(request.data);
     });
 };
 
-exports.loadStruct = function(path, structType = structs.Struct) {
-    if (!shouldBeCached(path)) {
-        var structInstance = new structType(path);
+exports.loadStruct = function(filePath, structType = structs.Struct) {
+    if (!shouldBeCached(filePath)) {
+        var structInstance = new structType(filePath);
 
         structInstance.loadFromFile();
 
         return Promise.resolve(structInstance);
     }
 
-    return bucketQueue.requestFile(path).then(function() {
-        var structInstance = new structType(path);
+    return bucketQueue.requestFile(filePath).then(function() {
+        var structInstance = new structType(filePath);
 
         structInstance.loadFromFile();
 
@@ -79,29 +81,31 @@ exports.loadStruct = function(path, structType = structs.Struct) {
     });
 };
 
-exports.saveFile = function(path, data) {
-    fs.writeFileSync(config.resolvePath(path), data);
+exports.saveFile = function(filePath, data) {
+    mkdirp.sync(path.dirname(config.resolvePath(filePath)));
+    fs.writeFileSync(config.resolvePath(filePath), data);
 
-    if (shouldBeCached(path)) {
-        bucketQueue.cacheFile(path, data.length);
+    if (shouldBeCached(filePath)) {
+        bucketQueue.cacheFile(filePath, data.length);
     }
 };
 
 exports.saveStruct = function(structInstance) {
+    mkdirp.sync(path.dirname(config.resolvePath(filePath)));
     structInstance.saveToFile();
 
-    if (shouldBeCached(path)) {
-        bucketQueue.cacheFile(structInstance.path, structInstance.calculateSize());
+    if (shouldBeCached(filePath)) {
+        bucketQueue.cacheFile(structInstance.filePath, structInstance.calculateSize());
     }
 };
 
 // Works for struct too
-exports.deleteFile = function(path) {
-    var fileSize = fs.statSync(config.resolvePath(path)).size;
+exports.deleteFile = function(filePath) {
+    var fileSize = fs.statSync(config.resolvePath(filePath)).size;
 
-    fs.rmSync(config.resolvePath(path));
+    fs.rmSync(config.resolvePath(filePath));
 
-    if (shouldBeCached(path)) {
-        bucketQueue.deleteFile(path, fileSize);
+    if (shouldBeCached(filePath)) {
+        bucketQueue.deleteFile(filePath, fileSize);
     }
 };

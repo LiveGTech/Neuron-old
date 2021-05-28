@@ -10,9 +10,14 @@
 */
 
 var config = require("./config");
+
+config.init();
+
 var bucketQueue = require("./bucketqueue");
 var server = require("./server");
 
-config.init();
 bucketQueue.load();
-server.start();
+
+if (require.main == module) {
+    server.start();
+}

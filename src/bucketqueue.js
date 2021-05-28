@@ -8,6 +8,8 @@
 */
 
 const fs = require("fs");
+const path = require("path");
+const mkdirp = require("mkdirp");
 
 var config = require("./config");
 
@@ -34,6 +36,7 @@ exports.requestRetrievalState = {
 // Called when space is needed, and so files in cache need to be evicted
 exports.evictFiles = function(spaceToReserve) {
     while (exports.cachedFiles.length > 0) {
+        console.log(exports.cachedSize, MAX_BUCKET_CACHE_SIZE - spaceToReserve);
         if (exports.cachedSize < MAX_BUCKET_CACHE_SIZE - spaceToReserve) {
             break;
         }
@@ -87,10 +90,10 @@ exports.deleteFile = function(path, size) {
 };
 
 // Use `txCallback` callback for directly streaming data to a client
-exports.requestFile = function(path, txCallback = function() {}) {
+exports.requestFile = function(filePath, txCallback = function() {}) {
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
-        if (exports.cachedFiles[i].path == path) {
-            var fileContents = fs.readFileSync(config.resolvePath(path));
+        if (exports.cachedFiles[i].path == filePath) {
+            var fileContents = fs.readFileSync(config.resolvePath(filePath));
 
             var request = {
                 ...exports.cachedFiles[i],
@@ -107,13 +110,13 @@ exports.requestFile = function(path, txCallback = function() {}) {
     }
 
     for (var i = 0; i < exports.filesToRequest; i++) {
-        if (exports.filesToRequest[i].path == path) {
+        if (exports.filesToRequest[i].path == filePath) {
             return exports.filesToRequest[i].promise;
         }
     }
 
     var request = {
-        path,
+        path: filePath,
         timestamp: new Date().getTime,
         state: exports.requestRetrievalState.UNFULFILLED,
         bytesTransferred: 0,
@@ -154,8 +157,9 @@ exports.requestFile = function(path, txCallback = function() {}) {
             }
 
             if (request.state == exports.requestRetrievalState.FULFILLED) {
-                fs.writeFileSync(config.resolvePath(path), request.data);
-                exports.cacheFile(path, request.data.length);
+                mkdirp.sync(path.dirname(config.resolvePath(filePath)));
+                fs.writeFileSync(config.resolvePath(filePath), request.data);
+                exports.cacheFile(filePath, request.data.length);
 
                 resolve(request);
 
@@ -176,11 +180,11 @@ exports.requestFile = function(path, txCallback = function() {}) {
 };
 
 // Used to register files which have been saved to cache storage but not yet registered
-exports.cacheFile = function(path, size) {
+exports.cacheFile = function(filePath, size) {
     exports.evictFiles(size);
 
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
-        if (exports.cachedFiles[i].path == path) {
+        if (exports.cachedFiles[i].path == filePath) {
             exports.cachedFiles.splice(i);
 
             break;
@@ -188,12 +192,12 @@ exports.cacheFile = function(path, size) {
     }
 
     exports.cachedFiles.push({
-        path,
+        path: filePath,
         size,
         timestamp: new Date().getTime
     });
 
-    exports.cachedSize += request.bytesTotal;
+    exports.cachedSize += size;
 };
 
 exports.load = function() {
@@ -225,29 +229,29 @@ exports.save = function() {
 exports.mergeQueues = function() {
     var mergedQueue = [];
 
-    for (var i = 0; i < fileCommitQueue.length; i++) {
+    for (var i = 0; i < exports.fileCommitQueue.length; i++) {
         mergedQueue.push({
             type: "commit",
-            path: fileCommitQueue[i].path,
-            timestamp: fileCommitQueue[i].timestamp
+            path: exports.fileCommitQueue[i].path,
+            timestamp: exports.fileCommitQueue[i].timestamp
         });
     }
 
-    for (var i = 0; i < fileDeleteQueue.length; i++) {
+    for (var i = 0; i < exports.fileDeleteQueue.length; i++) {
         mergedQueue.push({
             type: "delete",
-            path: fileDeleteQueue[i].path,
-            timestamp: fileDeleteQueue[i].timestamp
+            path: exports.fileDeleteQueue[i].path,
+            timestamp: exports.fileDeleteQueue[i].timestamp
         });
     }
 
-    for (var i = 0; i < filesToRequest.length; i++) {
+    for (var i = 0; i < exports.filesToRequest.length; i++) {
         mergedQueue.push({
             type: "request",
-            path: filesToRequest[i].path,
-            timestamp: filesToRequest[i].timestamp,
-            initialised: filesToRequest[i].state == exports.requestRetrievalState.INITIAL_INFO_RECEIVED,
-            bytesTransferred: filesToRequest[i].bytesTransferred
+            path: exports.filesToRequest[i].path,
+            timestamp: exports.filesToRequest[i].timestamp,
+            initialised: exports.filesToRequest[i].state == exports.requestRetrievalState.INITIAL_INFO_RECEIVED,
+            bytesTransferred: exports.filesToRequest[i].bytesTransferred
         });
     }
 
@@ -265,7 +269,7 @@ exports.getFromQueueAtTimestamp = function(queue, timestamp) {
 };
 
 exports.resolveCommit = function(timestamp) {
-    var item = exports.getFromQueueAtTimestamp(fileCommitQueue, timestamp);
+    var item = exports.getFromQueueAtTimestamp(exports.fileCommitQueue, timestamp);
 
     if (item == null) {
         return; // Has been since removed
@@ -275,7 +279,7 @@ exports.resolveCommit = function(timestamp) {
 };
 
 exports.resolveDelete = function(timestamp) {
-    var item = exports.getFromQueueAtTimestamp(fileDeleteQueue, timestamp);
+    var item = exports.getFromQueueAtTimestamp(exports.fileDeleteQueue, timestamp);
 
     if (item == null) {
         return; // Has been since removed
@@ -285,7 +289,7 @@ exports.resolveDelete = function(timestamp) {
 };
 
 exports.initRequest = function(timestamp, info) {
-    var item = exports.getFromQueueAtTimestamp(filesToRequest, timestamp);
+    var item = exports.getFromQueueAtTimestamp(exports.filesToRequest, timestamp);
 
     if (item == null) {
         return; // Has been since resolved, possibly by another storage node
@@ -301,7 +305,7 @@ exports.initRequest = function(timestamp, info) {
 };
 
 exports.txRequestData = function(timestamp, dataChunk, previousBytesTransferred) {
-    var item = exports.getFromQueueAtTimestamp(filesToRequest, timestamp);
+    var item = exports.getFromQueueAtTimestamp(exports.filesToRequest, timestamp);
 
     if (item == null) {
         return; // Has been since resolved, possibly by another storage node
@@ -327,7 +331,7 @@ exports.txRequestData = function(timestamp, dataChunk, previousBytesTransferred)
 };
 
 exports.txRequestMarkNotFound = function(timestamp) {
-    var item = exports.getFromQueueAtTimestamp(filesToRequest, timestamp);
+    var item = exports.getFromQueueAtTimestamp(exports.filesToRequest, timestamp);
 
     if (item == null) {
         return; // Has been since resolved, possibly by another storage node

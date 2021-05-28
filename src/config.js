@@ -40,6 +40,8 @@ exports.create = function(file = CONFIG_PATH) {
     } catch (e) {
         throw new ReferenceError("Couldn't write new configuration file");
     }
+
+    console.log("Configuration created");
 };
 
 exports.load = function(file = CONFIG_PATH) {
@@ -52,6 +54,8 @@ exports.load = function(file = CONFIG_PATH) {
     } catch (e) {
         throw new SyntaxError("Couldn't to parse configuration file; ensure that format is correct");
     }
+
+    console.log("Configuration loaded");
 };
 
 exports.init = function(file = CONFIG_PATH) {
@@ -68,9 +72,9 @@ exports.resolvePath = function(bucketPath) {
     }
 
     if (bucketPath.split(":")[0] == "identity") {
-        var absolutePath = path.resolve(__dirname, exports.data.identityStorage || CONFIG_DEFAULT_IDENTITY_PATH, bucketPath.split(":")[1]);
+        var absolutePath = path.resolve(__dirname, "..", exports.data.identityStorage || CONFIG_DEFAULT_IDENTITY_PATH, bucketPath.split(":")[1]);
 
-        if (!absolutePath.startsWith(path.resolve(__dirname, exports.data.identityStorage || CONFIG_DEFAULT_IDENTITY_PATH))) {
+        if (!absolutePath.startsWith(path.resolve(__dirname, "..", exports.data.identityStorage || CONFIG_DEFAULT_IDENTITY_PATH))) {
             throw new ReferenceError("Cannot get path outside of bucket");
         }
 
@@ -78,9 +82,9 @@ exports.resolvePath = function(bucketPath) {
     }
 
     if (bucketPath.split(":")[0] == "bucket") {
-        var absolutePath = path.resolve(__dirname, exports.data.bucketStorage || CONFIG_DEFAULT_BUCKET_PATH, bucketPath.split(":")[1]);
+        var absolutePath = path.resolve(__dirname, "..", exports.data.bucketStorage || CONFIG_DEFAULT_BUCKET_PATH, bucketPath.split(":")[1]);
 
-        if (!absolutePath.startsWith(path.resolve(__dirname, exports.data.bucketStorage || CONFIG_DEFAULT_BUCKET_PATH))) {
+        if (!absolutePath.startsWith(path.resolve(__dirname, "..", exports.data.bucketStorage || CONFIG_DEFAULT_BUCKET_PATH))) {
             throw new ReferenceError("Cannot get path outside of bucket");
         }
 
@@ -88,9 +92,9 @@ exports.resolvePath = function(bucketPath) {
     }
 
     if (bucketPath.split(":")[0] == "shared") {
-        var absolutePath = path.resolve(__dirname, exports.data.sharedStorage || CONFIG_DEFAULT_SHARED_PATH, bucketPath.split(":")[1]);
+        var absolutePath = path.resolve(__dirname, "..", exports.data.sharedStorage || CONFIG_DEFAULT_SHARED_PATH, bucketPath.split(":")[1]);
 
-        if (!absolutePath.startsWith(path.resolve(__dirname, exports.data.sharedStorage || CONFIG_DEFAULT_SHARED_PATH))) {
+        if (!absolutePath.startsWith(path.resolve(__dirname, "..", exports.data.sharedStorage || CONFIG_DEFAULT_SHARED_PATH))) {
             throw new ReferenceError("Cannot get path outside of bucket");
         }
 
