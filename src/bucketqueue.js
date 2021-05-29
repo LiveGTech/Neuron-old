@@ -15,7 +15,7 @@ var config = require("./config");
 
 const MAX_BUCKET_CACHE_SIZE = config.data.maxBucketCacheSize || 8 * 1024 * 1024 * 1024; // 8 GiB default
 const MAX_EVICTION_QUEUE_TIME = config.data.maxEvictionQueueTime || 60 * 60 * 1000; // 1 hr default
-const REQUEST_TIMEOUT = 10 * 1000; // 10 secs default
+const REQUEST_TIMEOUT = config.data.requestTimeout || 10 * 1000; // 10 secs default
 const QUEUE_PATH = config.resolvePath("identity:queue.bson");
 
 exports.cachedFiles = [];
