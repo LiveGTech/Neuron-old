@@ -42,6 +42,7 @@ console.log(bucketQueue.mergeQueues());
 
 console.log("Tx file 2 to fulfil request");
 bucketQueue.initRequest(bucketQueue.mergeQueues()[1]?.timestamp, {
+    fileType: "file",
     bytesTotal: 100
 });
 
@@ -53,3 +54,26 @@ bucketQueue.txRequestData(
 
 console.log("Get queue");
 console.log(bucketQueue.mergeQueues());
+
+console.log("Create empty folder and child folder");
+fileMgmt.createFolder("shared:empty/subfolder");
+
+console.log("Get queue");
+console.log(bucketQueue.mergeQueues());
+
+console.log("Check existence of folder");
+fileMgmt.checkFileExists("shared:empty").then(function(type) {
+    console.log("Checked existence");
+    console.log(type);
+}).catch(function() {
+    console.error("Does not exist");
+});
+
+console.log("Get queue");
+console.log(bucketQueue.mergeQueues());
+
+console.log("Respond existence");
+bucketQueue.initRequest(bucketQueue.mergeQueues()[2]?.timestamp, {
+    fileType: "folder",
+    bytesTotal: 0
+});

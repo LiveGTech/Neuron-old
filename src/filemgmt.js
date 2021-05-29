@@ -32,7 +32,7 @@ function shouldBeCached(filePath) {
     return true;
 }
 
-// Works for struct too
+// Works for structs and folders too
 exports.checkFileExists = function(filePath) {
     if (!shouldBeCached(filePath)) {
         if (fs.existsSync(config.resolvePath(filePath))) {
@@ -49,7 +49,7 @@ exports.checkFileExists = function(filePath) {
             return Promise.reject();
         }
 
-        return Promise.resolve();
+        return Promise.resolve(request.fileType); // Request is resolved with file type (eg. if it's a folder)
     });
 };
 
@@ -99,7 +99,7 @@ exports.saveStruct = function(structInstance) {
     }
 };
 
-// Works for struct too
+// Works for structs and folders too
 exports.deleteFile = function(filePath) {
     var fileSize = fs.statSync(config.resolvePath(filePath)).size;
 
@@ -107,5 +107,13 @@ exports.deleteFile = function(filePath) {
 
     if (shouldBeCached(filePath)) {
         bucketQueue.deleteFile(filePath, fileSize);
+    }
+};
+
+exports.createFolder = function (filePath) {
+    mkdirp.sync(path.dirname(config.resolvePath(filePath)));
+
+    if (shouldBeCached(filePath)) {
+        bucketQueue.cacheFolder(filePath);
     }
 };

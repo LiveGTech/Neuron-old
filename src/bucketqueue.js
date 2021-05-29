@@ -93,15 +93,24 @@ exports.deleteFile = function(path, size) {
 exports.requestFile = function(filePath, txCallback = function() {}) {
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
         if (exports.cachedFiles[i].path == filePath) {
-            var fileContents = fs.readFileSync(config.resolvePath(filePath));
-
             var request = {
                 ...exports.cachedFiles[i],
                 state: exports.requestRetrievalState.FULFILLED,
-                bytesTransferred: fileContents.length,
-                bytesTotal: fileContents.length,
-                data: fileContents
             };
+
+            if (fs.statSync(config.resolvePath(filePath)).isDirectory()) {
+                request.fileType = "folder";
+                request.bytesTransferred = 0;
+                request.bytesTotal = 0;
+                request.data = new ArrayBuffer(0);
+            } else {
+                var fileContents = fs.readFileSync(config.resolvePath(filePath));
+
+                request.fileType = "file";
+                request.bytesTransferred = fileContents.length;
+                request.bytesTotal = fileContents.length;
+                request.data = fileContents;
+            }
 
             txCallback(request);
 
@@ -117,7 +126,8 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
 
     var request = {
         path: filePath,
-        timestamp: new Date().getTime,
+        fileType: null,
+        timestamp: new Date().getTime(),
         state: exports.requestRetrievalState.UNFULFILLED,
         bytesTransferred: 0,
         bytesTotal: null,
@@ -158,8 +168,13 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
 
             if (request.state == exports.requestRetrievalState.FULFILLED) {
                 mkdirp.sync(path.dirname(config.resolvePath(filePath)));
-                fs.writeFileSync(config.resolvePath(filePath), request.data);
-                exports.cacheFile(filePath, request.data.length);
+
+                if (request.fileType == "file") {
+                    fs.writeFileSync(config.resolvePath(filePath), request.data);
+                    exports.cacheFile(filePath, request.data.length);
+                } else if (request.fileType == "folder") {
+                    exports.cacheFolder(filePath);
+                }
 
                 resolve(request);
 
@@ -185,19 +200,37 @@ exports.cacheFile = function(filePath, size) {
 
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
         if (exports.cachedFiles[i].path == filePath) {
-            exports.cachedFiles.splice(i);
+            exports.cachedFiles.splice(i, 1);
 
             break;
         }
     }
 
     exports.cachedFiles.push({
+        fileType: "file",
         path: filePath,
         size,
         timestamp: new Date().getTime
     });
 
     exports.cachedSize += size;
+};
+
+exports.cacheFolder = function(filePath) {
+    for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
+        if (exports.cachedFiles[i].path == filePath) {
+            exports.cachedFiles.splice(i, 1);
+
+            break;
+        }
+    }
+
+    exports.cachedFiles.push({
+        fileType: "folder",
+        path: filePath,
+        size: 0,
+        timestamp: new Date().getTime
+    });
 };
 
 exports.load = function() {
@@ -232,6 +265,7 @@ exports.mergeQueues = function() {
     for (var i = 0; i < exports.fileCommitQueue.length; i++) {
         mergedQueue.push({
             type: "commit",
+            fileType: exports.fileCommitQueue[i].fileType,
             path: exports.fileCommitQueue[i].path,
             timestamp: exports.fileCommitQueue[i].timestamp
         });
@@ -299,7 +333,8 @@ exports.initRequest = function(timestamp, info) {
         return; // Already being transferred, possibly by another storage node
     }
 
-    item.state = exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
+    item.state = info.bytesTotal == 0 ? exports.requestRetrievalState.FULFILLED : exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
+    item.fileType = info.fileType || "file";
     item.bytesTotal = info.bytesTotal;
     item.data = new ArrayBuffer(info.bytesTotal);
 };
