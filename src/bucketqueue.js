@@ -36,7 +36,6 @@ exports.requestRetrievalState = {
 // Called when space is needed, and so files in cache need to be evicted
 exports.evictFiles = function(spaceToReserve) {
     while (exports.cachedFiles.length > 0) {
-        console.log(exports.cachedSize, MAX_BUCKET_CACHE_SIZE - spaceToReserve);
         if (exports.cachedSize < MAX_BUCKET_CACHE_SIZE - spaceToReserve) {
             break;
         }
@@ -47,14 +46,24 @@ exports.evictFiles = function(spaceToReserve) {
         exports.cachedFiles[0].alreadyCommittedOnce = false;
         exports.cachedFiles[0].timestamp = new Date().getTime();
 
+        console.log(`Evicted file ${exports.cachedFiles[0].path}`);
+
         exports.fileCommitQueue.push(exports.cachedFiles.shift());
     }
 
     for (var i = 0; i < exports.fileCommitQueue.length; i++) {
         if (exports.fileCommitQueue[i].alreadyCommittedOnce && exports.fileCommitQueue[i].timestamp < new Date().getTime() - MAX_EVICTION_QUEUE_TIME) {
-            if (fs.existsSync(config.resolvePath(exports.fileCommitQueue[i].path))) {
-                fs.rmSync(config.resolvePath(exports.fileCommitQueue[i].path));
+            var pathToRemove = config.resolvePath(exports.fileCommitQueue[i].path);
+
+            if (fs.existsSync(pathToRemove)) {
+                if (fs.statSync(pathToRemove).isDirectory()) {
+                    fs.rmdirSync(config.resolvePath(exports.fileCommitQueue[i].path), {recursive: true});
+                } else {
+                    fs.rmSync(config.resolvePath(exports.fileCommitQueue[i].path));
+                }
             }
+
+            console.log(`Removed committed file ${exports.fileCommitQueue[i].path}`);
 
             exports.queueMinTimestamp = exports.fileCommitQueue[i].timestamp; // So long as storage node has files newer than this time, they're working
             exports.fileCommitQueue[i] = null; // Remove if certain that all storage nodes have committed this file
@@ -64,9 +73,9 @@ exports.evictFiles = function(spaceToReserve) {
     exports.fileCommitQueue = exports.fileCommitQueue.filter((i) => i != null);
 };
 
-exports.deleteFile = function(path, size) {
+exports.deleteFile = function(filePath, size) {
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
-        if (exports.cachedFiles[i].path == path) {
+        if (exports.cachedFiles[i].path == filePath) {
             exports.cachedFiles.splice(i);
 
             break;
@@ -74,7 +83,7 @@ exports.deleteFile = function(path, size) {
     }
 
     exports.fileDeleteQueue.push({
-        path,
+        path: filePath,
         size,
         timestamp: new Date().getTime
     });
@@ -87,21 +96,32 @@ exports.deleteFile = function(path, size) {
     }
 
     exports.fileDeleteQueue = exports.fileDeleteQueue.filter((i) => i != null);
+
+    console.log(`Deleted file ${filePath}`);
 };
 
 // Use `txCallback` callback for directly streaming data to a client
 exports.requestFile = function(filePath, txCallback = function() {}) {
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
         if (exports.cachedFiles[i].path == filePath) {
-            var fileContents = fs.readFileSync(config.resolvePath(filePath));
-
             var request = {
                 ...exports.cachedFiles[i],
                 state: exports.requestRetrievalState.FULFILLED,
-                bytesTransferred: fileContents.length,
-                bytesTotal: fileContents.length,
-                data: fileContents
             };
+
+            if (fs.statSync(config.resolvePath(filePath)).isDirectory()) {
+                request.fileType = "folder";
+                request.bytesTransferred = 0;
+                request.bytesTotal = 0;
+                request.data = new ArrayBuffer(0);
+            } else {
+                var fileContents = fs.readFileSync(config.resolvePath(filePath));
+
+                request.fileType = "file";
+                request.bytesTransferred = fileContents.length;
+                request.bytesTotal = fileContents.length;
+                request.data = fileContents;
+            }
 
             txCallback(request);
 
@@ -117,7 +137,8 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
 
     var request = {
         path: filePath,
-        timestamp: new Date().getTime,
+        fileType: null,
+        timestamp: new Date().getTime(),
         state: exports.requestRetrievalState.UNFULFILLED,
         bytesTransferred: 0,
         bytesTotal: null,
@@ -157,9 +178,23 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
             }
 
             if (request.state == exports.requestRetrievalState.FULFILLED) {
-                mkdirp.sync(path.dirname(config.resolvePath(filePath)));
-                fs.writeFileSync(config.resolvePath(filePath), request.data);
-                exports.cacheFile(filePath, request.data.length);
+                try {
+                    mkdirp.sync(request.fileType == "folder" ? config.resolvePath(filePath) : path.dirname(config.resolvePath(filePath)));
+                } catch (e) {
+                    console.warn("Mismatched communications between storage node and server when requesting file");
+                    resolve(request);
+
+                    return;
+                }
+
+                if (request.fileType == "file") {
+                    fs.writeFileSync(config.resolvePath(filePath), request.data);
+                    exports.cacheFile(filePath, request.data.length);
+                } else if (request.fileType == "folder") {
+                    exports.cacheFolder(filePath);
+                }
+
+                console.log(`Fulfilled request for file ${filePath}`);
 
                 resolve(request);
 
@@ -167,6 +202,8 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
             }
 
             if (request.state == exports.requestRetrievalState.ERR_NOT_FOUND) {
+                console.log(`Rejected request for file ${filePath} since it does not exist`);
+
                 reject(request);
 
                 return;
@@ -175,6 +212,8 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
     });
 
     exports.filesToRequest.push(request);
+
+    console.log(`Requested file ${filePath}`);
 
     return request.promise;
 };
@@ -185,19 +224,41 @@ exports.cacheFile = function(filePath, size) {
 
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
         if (exports.cachedFiles[i].path == filePath) {
-            exports.cachedFiles.splice(i);
+            exports.cachedFiles.splice(i, 1);
 
             break;
         }
     }
 
     exports.cachedFiles.push({
+        fileType: "file",
         path: filePath,
         size,
         timestamp: new Date().getTime
     });
 
     exports.cachedSize += size;
+
+    console.log(`Cached file ${filePath}`);
+};
+
+exports.cacheFolder = function(filePath) {
+    for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
+        if (exports.cachedFiles[i].path == filePath) {
+            exports.cachedFiles.splice(i, 1);
+
+            break;
+        }
+    }
+
+    exports.cachedFiles.push({
+        fileType: "folder",
+        path: filePath,
+        size: 0,
+        timestamp: new Date().getTime
+    });
+
+    console.log(`Cached folder ${filePath}`);
 };
 
 exports.load = function() {
@@ -232,6 +293,7 @@ exports.mergeQueues = function() {
     for (var i = 0; i < exports.fileCommitQueue.length; i++) {
         mergedQueue.push({
             type: "commit",
+            fileType: exports.fileCommitQueue[i].fileType,
             path: exports.fileCommitQueue[i].path,
             timestamp: exports.fileCommitQueue[i].timestamp
         });
@@ -255,7 +317,9 @@ exports.mergeQueues = function() {
         });
     }
 
-    return mergedQueue;
+    return mergedQueue.sort(function(a, b) {
+        return a.timestamp - b.timestamp;
+    });
 };
 
 exports.getFromQueueAtTimestamp = function(queue, timestamp) {
@@ -299,7 +363,8 @@ exports.initRequest = function(timestamp, info) {
         return; // Already being transferred, possibly by another storage node
     }
 
-    item.state = exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
+    item.state = info.bytesTotal == 0 ? exports.requestRetrievalState.FULFILLED : exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
+    item.fileType = info.fileType || "file";
     item.bytesTotal = info.bytesTotal;
     item.data = new ArrayBuffer(info.bytesTotal);
 };
