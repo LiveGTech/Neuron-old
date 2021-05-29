@@ -4,7 +4,7 @@ Backend system for storing documents and data under LiveG Accounts.
 Licensed by the [LiveG Open-Source Licence](LICENCE.md).
 
 ## Neuron's architecture
-Neuron is written using pure [Node.JS](https://nodejs.org) and uses [Express](http://expressjs.com) as its web server. Neuron uses a central cloud server with a fast file cache, and multiple slower storage nodes for larger or less frequently accessed files.
+Neuron is written using pure [Node.js](https://nodejs.org) and uses [Express](http://expressjs.com) as its web server. Neuron uses a central cloud server with a fast file cache, and multiple slower storage nodes for larger or less frequently accessed files.
 
 ## One-line install
 Coming soon!
