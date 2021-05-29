@@ -34,9 +34,9 @@ function shouldBeCached(filePath) {
 
 // Works for structs and folders too
 exports.checkFileExists = function(filePath) {
-    if (!shouldBeCached(filePath)) {
+    if (shouldBeCached(filePath)) {
         if (fs.existsSync(config.resolvePath(filePath))) {
-            return Promise.resolve();
+            return Promise.resolve(fs.statSync(config.resolvePath(filePath)).isDirectory() ? "folder" : "file");
         } else {
             return Promise.reject();
         }
@@ -101,17 +101,21 @@ exports.saveStruct = function(structInstance) {
 
 // Works for structs and folders too
 exports.deleteFile = function(filePath) {
-    var fileSize = fs.statSync(config.resolvePath(filePath)).size;
+    var fileStats = fs.statSync(config.resolvePath(filePath));
 
-    fs.rmSync(config.resolvePath(filePath));
+    if (fileStats.isDirectory()) {
+        fs.rmdirSync(config.resolvePath(filePath), {recursive: true});
+    } else {
+        fs.rmSync(config.resolvePath(filePath));
+    }
 
     if (shouldBeCached(filePath)) {
-        bucketQueue.deleteFile(filePath, fileSize);
+        bucketQueue.deleteFile(filePath, fileStats.size);
     }
 };
 
 exports.createFolder = function (filePath) {
-    mkdirp.sync(path.dirname(config.resolvePath(filePath)));
+    mkdirp.sync(config.resolvePath(filePath));
 
     if (shouldBeCached(filePath)) {
         bucketQueue.cacheFolder(filePath);

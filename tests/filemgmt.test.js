@@ -20,6 +20,7 @@ fileMgmt.loadFile("shared:test1.txt").then(function(data) {
     console.log(data);
 });
 
+console.log("Save file 2");
 fileMgmt.saveFile("shared:test2.txt", "2".repeat(100));
 
 console.log("Get queue");

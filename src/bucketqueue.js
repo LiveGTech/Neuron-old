@@ -36,7 +36,6 @@ exports.requestRetrievalState = {
 // Called when space is needed, and so files in cache need to be evicted
 exports.evictFiles = function(spaceToReserve) {
     while (exports.cachedFiles.length > 0) {
-        console.log(exports.cachedSize, MAX_BUCKET_CACHE_SIZE - spaceToReserve);
         if (exports.cachedSize < MAX_BUCKET_CACHE_SIZE - spaceToReserve) {
             break;
         }
@@ -47,14 +46,24 @@ exports.evictFiles = function(spaceToReserve) {
         exports.cachedFiles[0].alreadyCommittedOnce = false;
         exports.cachedFiles[0].timestamp = new Date().getTime();
 
+        console.log(`Evicted file ${exports.cachedFiles[0].path}`);
+
         exports.fileCommitQueue.push(exports.cachedFiles.shift());
     }
 
     for (var i = 0; i < exports.fileCommitQueue.length; i++) {
         if (exports.fileCommitQueue[i].alreadyCommittedOnce && exports.fileCommitQueue[i].timestamp < new Date().getTime() - MAX_EVICTION_QUEUE_TIME) {
-            if (fs.existsSync(config.resolvePath(exports.fileCommitQueue[i].path))) {
-                fs.rmSync(config.resolvePath(exports.fileCommitQueue[i].path));
+            var pathToRemove = config.resolvePath(exports.fileCommitQueue[i].path);
+
+            if (fs.existsSync(pathToRemove)) {
+                if (fs.statSync(pathToRemove).isDirectory()) {
+                    fs.rmdirSync(config.resolvePath(exports.fileCommitQueue[i].path), {recursive: true});
+                } else {
+                    fs.rmSync(config.resolvePath(exports.fileCommitQueue[i].path));
+                }
             }
+
+            console.log(`Removed committed file ${exports.fileCommitQueue[i].path}`);
 
             exports.queueMinTimestamp = exports.fileCommitQueue[i].timestamp; // So long as storage node has files newer than this time, they're working
             exports.fileCommitQueue[i] = null; // Remove if certain that all storage nodes have committed this file
@@ -64,9 +73,9 @@ exports.evictFiles = function(spaceToReserve) {
     exports.fileCommitQueue = exports.fileCommitQueue.filter((i) => i != null);
 };
 
-exports.deleteFile = function(path, size) {
+exports.deleteFile = function(filePath, size) {
     for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
-        if (exports.cachedFiles[i].path == path) {
+        if (exports.cachedFiles[i].path == filePath) {
             exports.cachedFiles.splice(i);
 
             break;
@@ -74,7 +83,7 @@ exports.deleteFile = function(path, size) {
     }
 
     exports.fileDeleteQueue.push({
-        path,
+        path: filePath,
         size,
         timestamp: new Date().getTime
     });
@@ -87,6 +96,8 @@ exports.deleteFile = function(path, size) {
     }
 
     exports.fileDeleteQueue = exports.fileDeleteQueue.filter((i) => i != null);
+
+    console.log(`Deleted file ${filePath}`);
 };
 
 // Use `txCallback` callback for directly streaming data to a client
@@ -167,7 +178,14 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
             }
 
             if (request.state == exports.requestRetrievalState.FULFILLED) {
-                mkdirp.sync(path.dirname(config.resolvePath(filePath)));
+                try {
+                    mkdirp.sync(request.fileType == "folder" ? config.resolvePath(filePath) : path.dirname(config.resolvePath(filePath)));
+                } catch (e) {
+                    console.warn("Mismatched communications between storage node and server when requesting file");
+                    resolve(request);
+
+                    return;
+                }
 
                 if (request.fileType == "file") {
                     fs.writeFileSync(config.resolvePath(filePath), request.data);
@@ -176,12 +194,16 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
                     exports.cacheFolder(filePath);
                 }
 
+                console.log(`Fulfilled request for file ${filePath}`);
+
                 resolve(request);
 
                 return;
             }
 
             if (request.state == exports.requestRetrievalState.ERR_NOT_FOUND) {
+                console.log(`Rejected request for file ${filePath} since it does not exist`);
+
                 reject(request);
 
                 return;
@@ -190,6 +212,8 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
     });
 
     exports.filesToRequest.push(request);
+
+    console.log(`Requested file ${filePath}`);
 
     return request.promise;
 };
@@ -214,6 +238,8 @@ exports.cacheFile = function(filePath, size) {
     });
 
     exports.cachedSize += size;
+
+    console.log(`Cached file ${filePath}`);
 };
 
 exports.cacheFolder = function(filePath) {
@@ -231,6 +257,8 @@ exports.cacheFolder = function(filePath) {
         size: 0,
         timestamp: new Date().getTime
     });
+
+    console.log(`Cached folder ${filePath}`);
 };
 
 exports.load = function() {
@@ -289,7 +317,9 @@ exports.mergeQueues = function() {
         });
     }
 
-    return mergedQueue;
+    return mergedQueue.sort(function(a, b) {
+        return a.timestamp - b.timestamp;
+    });
 };
 
 exports.getFromQueueAtTimestamp = function(queue, timestamp) {
