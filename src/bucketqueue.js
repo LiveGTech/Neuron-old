@@ -133,16 +133,13 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
             };
 
             if (fs.statSync(config.resolvePath(filePath)).isDirectory()) {
-                request.fileType = "folder";
-                request.bytesTransferred = 0;
-                request.bytesTotal = 0;
-                request.data = new ArrayBuffer(0);
+                break; // Let storage nodes handle folder listings
             } else {
                 var fileContents = fs.readFileSync(config.resolvePath(filePath));
 
                 request.fileType = "file";
                 request.bytesTransferred = fileContents.length;
-                request.bytesTotal = fileContents.length;
+                request.size = fileContents.length;
                 request.data = fileContents;
             }
 
@@ -164,7 +161,7 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
         timestamp: getSubdividedTimestamp(),
         state: exports.requestRetrievalState.UNFULFILLED,
         bytesTransferred: 0,
-        bytesTotal: null,
+        size: null,
         data: null
     };
 
@@ -437,10 +434,11 @@ exports.initRequest = function(timestamp, info) {
         return; // Already being transferred, possibly by another storage node
     }
 
-    item.state = info.bytesTotal == 0 ? exports.requestRetrievalState.FULFILLED : exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
+    item.state = info.size == 0 ? exports.requestRetrievalState.FULFILLED : exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
     item.fileType = info.fileType || "file";
-    item.bytesTotal = info.bytesTotal;
-    item.data = new Uint8Array(info.bytesTotal);
+    item.size = info.size || 0;
+    item.data = new Uint8Array(info.size);
+    item.listing = info.listing || [];
 };
 
 exports.txRequestData = function(timestamp, dataChunk, previousBytesTransferred) {
@@ -463,9 +461,9 @@ exports.txRequestData = function(timestamp, dataChunk, previousBytesTransferred)
 
     item.bytesTransferred += dataChunk.length;
 
-    if (item.bytesTransferred >= item.bytesTotal) {
+    if (item.bytesTransferred >= item.size) {
         item.state = exports.requestRetrievalState.FULFILLED;
-        item.bytesTotal = item.bytesTransferred;
+        item.size = item.bytesTransferred;
     }
 };
 

@@ -33,15 +33,28 @@ var dummyStorageNode = setInterval(function() {
             bucketQueue.resolveDelete(queueItem.timestamp);
         } else if (queueItem.type == "move") {
             console.log(`dummyStorageNode: Moving file at ${queueItem.path} to ${queueItem.newPath}`);
+
+            bucketQueue.resolveMove(queueItem.timestamp);
         } else if (queueItem.type == "request") {
             console.log(`dummyStorageNode: Received request for file at ${queueItem.path}`);
 
-            bucketQueue.initRequest(queueItem.timestamp, {
-                fileType: "file",
-                bytesTotal: queueItem.path.length
-            });
+            if (queueItem.path == "shared:folder") {
+                bucketQueue.initRequest(queueItem.timestamp, {
+                    fileType: "folder",
+                    listing: [
+                        {path: "shared:folder/path1", fileType: "file", timestamp: new Date().getTime(), size: 100},
+                        {path: "shared:folder/path2", fileType: "folder", timestamp: new Date().getTime(), size: 0},
+                        {path: "shared:folder/path3", fileType: "file", timestamp: new Date().getTime(), size: 100}
+                    ]
+                });
+            } else {
+                bucketQueue.initRequest(queueItem.timestamp, {
+                    fileType: "file",
+                    size: queueItem.path.length
+                });
 
-            bucketQueue.txRequestData(queueItem.timestamp, new TextEncoder().encode(queueItem.path), 0);
+                bucketQueue.txRequestData(queueItem.timestamp, new TextEncoder().encode(queueItem.path), 0);
+            }
         }
 
         syncTimestamp = queueItem.timestamp;
@@ -77,7 +90,14 @@ function performFileMove(number) {
     });
 }
 
+console.log("Create folder shared:folder");
 fileMgmt.createFolder("shared:folder");
+
+console.log("Request listing of folder shared:folder");
+fileMgmt.listFolder("shared:folder").then(function(data) {
+    console.log("Listed folder shared:folder");
+    console.log(data);
+});
 
 var promiseChain = Promise.resolve();
 

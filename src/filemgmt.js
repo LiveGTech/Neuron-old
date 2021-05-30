@@ -138,14 +138,6 @@ exports.deleteFile = function(filePath) {
     }
 };
 
-exports.createFolder = function(filePath) {
-    mkdirp.sync(config.resolvePath(filePath));
-
-    if (shouldBeCached(filePath)) {
-        bucketQueue.cacheFolder(filePath);
-    }
-};
-
 // Works for structs and folders too
 exports.moveFile = function(filePath, newFilePath) {
     ensureReplacement(newFilePath);
@@ -168,5 +160,60 @@ exports.copyFile = function(filePath, newFilePath) {
         exports.saveFile(newFilePath, data);
 
         return Promise.resolve();
+    });
+};
+
+// Works for structs too
+exports.statFile = function(filePath) {
+    if (!shouldBeCached(filePath)) {
+        var stats = fs.statSync(config.resolvePath(filePath));
+
+        return Promise.resolve({
+            path: filePath,
+            fileType: stats.isDirectory(),
+            timestamp: stats.atimeMs,
+            size: stats.size
+        });
+    }
+
+    return bucketQueue.requestFile(filePath, function() {
+        return true; // Immediately cancel request since we're stat-checking file only
+    }).then(function(request) {
+        return Promise.resolve(request);
+    });
+};
+
+exports.createFolder = function(filePath) {
+    mkdirp.sync(config.resolvePath(filePath));
+
+    if (shouldBeCached(filePath)) {
+        bucketQueue.cacheFolder(filePath);
+    }
+};
+
+exports.listFolder = function(filePath) {
+    if (!shouldBeCached(filePath)) {
+        if (!fs.statSync(config.resolvePath(filePath)).isDirectory()) {
+            return Promise.resolve([]);
+        }
+
+        var listing = fs.readdirSync(config.resolvePath(filePath));
+
+        return Promise.resolve(listing.map(function(file) {
+            var stats = fs.statSync(path.resolve(config.resolvePath(filePath), file));
+
+            return {
+                path: filePath.replace(/([^\/]*)\/?/g, "$1"),
+                fileType: stats.isDirectory() ? "folder" : "file",
+                timestamp: stats.atime,
+                size: stats.size
+            };
+        }));
+    }
+
+    return bucketQueue.requestFile(filePath, function() {
+        return true; // Immediately cancel request since we're stat-checking file only
+    }).then(function(request) {
+        return Promise.resolve(request.listing);
     });
 };

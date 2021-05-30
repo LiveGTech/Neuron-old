@@ -56,6 +56,10 @@ app.get("/bucketqueue/resolvedelete", authenticateStorageNode, function(req, res
     bucketQueue.resolveDelete(req.params.timestamp);
 });
 
+app.get("/bucketqueue/resolvemove", authenticateStorageNode, function(req, res) {
+    bucketQueue.resolveMove(req.params.timestamp);
+});
+
 app.post("/bucketqueue/initrequest", authenticateStorageNode, express.json(), function(req, res) {
     bucketQueue.initRequest(req.params.timestamp, req.body);
 });
