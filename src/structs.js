@@ -7,7 +7,7 @@
     Licensed by the LiveG Open-Source Licence, which can be found at LICENCE.md.
 */
 
-const fs = require("fs");
+const fs = require("fs-extra");
 const sha256 = require("crypto-js/sha256");
 
 var common = require("./common");

@@ -12,7 +12,7 @@
     clean file management interface.
 */
 
-const fs = require("fs");
+const fs = require("fs-extra");
 const path = require("path");
 const mkdirp = require("mkdirp");
 
@@ -30,6 +30,18 @@ function shouldBeCached(filePath) {
     }
 
     return true;
+}
+
+function ensureReplacement(filePath) {
+    var resolvedPath = config.resolvePath(filePath);
+
+    if (fs.existsSync(resolvedPath)) {
+        if (fs.statSync(resolvedPath).isDirectory()) {
+            fs.rmdirSync(resolvedPath, {recursive: true});
+        } else {
+            fs.rmSync(resolvedPath);
+        }
+    }
 }
 
 // Works for structs and folders too
@@ -82,6 +94,8 @@ exports.loadStruct = function(filePath, structType = structs.Struct) {
 };
 
 exports.saveFile = function(filePath, data) {
+    ensureReplacement(filePath);
+
     mkdirp.sync(path.dirname(config.resolvePath(filePath)));
     fs.writeFileSync(config.resolvePath(filePath), data);
 
@@ -91,6 +105,8 @@ exports.saveFile = function(filePath, data) {
 };
 
 exports.saveStruct = function(structInstance) {
+    ensureReplacement(filePath);
+
     mkdirp.sync(path.dirname(config.resolvePath(filePath)));
     structInstance.saveToFile();
 
@@ -122,10 +138,35 @@ exports.deleteFile = function(filePath) {
     }
 };
 
-exports.createFolder = function (filePath) {
+exports.createFolder = function(filePath) {
     mkdirp.sync(config.resolvePath(filePath));
 
     if (shouldBeCached(filePath)) {
         bucketQueue.cacheFolder(filePath);
     }
+};
+
+// Works for structs and folders too
+exports.moveFile = function(filePath, newFilePath) {
+    ensureReplacement(newFilePath);
+
+    if (fs.existsSync(config.resolvePath(filePath))) {
+        mkdirp.sync(path.dirname(config.resolvePath(newFilePath)));
+        fs.moveSync(config.resolvePath(filePath), config.resolvePath(newFilePath));
+    }
+
+    if (shouldBeCached(filePath)) {
+        bucketQueue.moveFile(filePath, newFilePath);
+    }
+};
+
+// Works for structs too
+exports.copyFile = function(filePath, newFilePath) {
+    ensureReplacement(newFilePath);
+
+    return exports.loadFile(filePath).then(function(data) {
+        exports.saveFile(newFilePath, data);
+
+        return Promise.resolve();
+    });
 };

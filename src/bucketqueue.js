@@ -7,7 +7,7 @@
     Licensed by the LiveG Open-Source Licence, which can be found at LICENCE.md.
 */
 
-const fs = require("fs");
+const fs = require("fs-extra");
 const path = require("path");
 const mkdirp = require("mkdirp");
 
@@ -25,6 +25,7 @@ exports.cachedFiles = [];
 exports.cachedSize = 0;
 exports.fileCommitQueue = [];
 exports.fileDeleteQueue = [];
+exports.fileMoveQueue = [];
 exports.filesToRequest = [];
 exports.queueMinTimestamp = 0;
 
@@ -104,6 +105,22 @@ exports.deleteFile = function(filePath, size) {
     exports.cachedSize -= size;
 
     console.log(`Deleted file ${filePath}`);
+};
+
+exports.moveFile = function(filePath, newFilePath) {
+    for (var i = exports.cachedFiles.length - 1; i >= 0; i--) {
+        if (exports.cachedFiles[i].path == filePath) {
+            exports.cachedFiles.splice(i, 1);
+
+            break;
+        }
+    }
+
+    exports.fileMoveQueue.push({
+        path: filePath,
+        newPath: newFilePath,
+        timestamp: getSubdividedTimestamp()
+    });
 };
 
 // Use `txCallback` callback for directly streaming data to a client
@@ -282,8 +299,9 @@ exports.load = function() {
     exports.cachedFiles = contents.cachedFiles;
     exports.cachedSize = contents.cachedSize;
     exports.fileCommitQueue = contents.fileCommitQueue;
-    exports.queueMinTimestamp = contents.fileCommitQueueMinimumTime;
     exports.fileDeleteQueue = contents.fileDeleteQueue;
+    exports.fileMoveQueue = contents.fileMoveQueue;
+    exports.queueMinTimestamp = contents.fileCommitQueueMinimumTime;
 };
 
 exports.save = function() {
@@ -292,10 +310,11 @@ exports.save = function() {
     contents.cachedFiles = exports.cachedFiles;
     contents.cachedSize = exports.cachedSize;
     contents.fileCommitQueue = exports.fileCommitQueue;
-    contents.fileCommitQueueMinimumTime = exports.queueMinTimestamp;
     contents.fileDeleteQueue = exports.fileDeleteQueue;
+    contents.fileMoveQueue = exports.fileMoveQueue;
+    contents.fileCommitQueueMinimumTime = exports.queueMinTimestamp;
 
-    fs.writeFileSync(QUEUE_PATH, contents);
+    fs.writeFileSync(QUEUE_PATH, BSON.serialize(contents));
 };
 
 exports.mergeQueues = function() {
@@ -322,6 +341,15 @@ exports.mergeQueues = function() {
             type: "delete",
             path: exports.fileDeleteQueue[i].path,
             timestamp: exports.fileDeleteQueue[i].timestamp
+        });
+    }
+
+    for (var i = 0; i < exports.fileMoveQueue.length; i++) {
+        mergedQueue.push({
+            type: "move",
+            path: exports.fileMoveQueue[i].path,
+            newPath: exports.fileMoveQueue[i].newPath,
+            timestamp: exports.fileMoveQueue[i].timestamp
         });
     }
 
@@ -354,7 +382,7 @@ exports.resolveCommit = function(timestamp, start, end) {
     var item = exports.getFromQueueAtTimestamp(exports.fileCommitQueue, timestamp);
 
     if (item == null) {
-        return new ArrayBuffer(0);
+        return new Uint8Array(0);
     }
 
     var data = fs.readFileSync(config.resolvePath(item.path)).slice(start, end);
@@ -388,6 +416,16 @@ exports.resolveDelete = function(timestamp) {
     item.alreadyCommittedOnce = true;
 };
 
+exports.resolveMove = function(timestamp) {
+    var item = exports.getFromQueueAtTimestamp(exports.fileDeleteQueue, timestamp);
+
+    if (item == null) {
+        return; // Has been since removed
+    }
+
+    item.alreadyCommittedOnce = true;
+};
+
 exports.initRequest = function(timestamp, info) {
     var item = exports.getFromQueueAtTimestamp(exports.filesToRequest, timestamp);
 
@@ -402,7 +440,7 @@ exports.initRequest = function(timestamp, info) {
     item.state = info.bytesTotal == 0 ? exports.requestRetrievalState.FULFILLED : exports.requestRetrievalState.INITIAL_INFO_RECEIVED;
     item.fileType = info.fileType || "file";
     item.bytesTotal = info.bytesTotal;
-    item.data = new ArrayBuffer(info.bytesTotal);
+    item.data = new Uint8Array(info.bytesTotal);
 };
 
 exports.txRequestData = function(timestamp, dataChunk, previousBytesTransferred) {

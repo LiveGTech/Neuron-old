@@ -21,18 +21,20 @@ var dummyStorageNode = setInterval(function() {
 
         if (queueItem.type == "commit") {
             if (queueItem.fileType == "file") {
-                console.log(`Saving file at ${queueItem.path}: length ${queueItem.size}`);
-                console.log(bucketQueue.resolveCommit(queueItem.timestamp, 0, queueItem.size));
+                console.log(`dummyStorageNode: Saving file at ${queueItem.path}: length ${queueItem.size}`);
+                console.log("dummyStorageNode:", bucketQueue.resolveCommit(queueItem.timestamp, 0, queueItem.size));
             } else {
-                console.log(`Saving folder at ${queueItem.path}`);
+                console.log(`dummyStorageNode: Saving folder at ${queueItem.path}`);
                 bucketQueue.resolveFolderCommit(queueItem.timestamp);
             }
         } else if (queueItem.type == "delete") {
-            console.log(`Deleting file at ${queueItem.path}`);
+            console.log(`dummyStorageNode: Deleting file at ${queueItem.path}`);
 
             bucketQueue.resolveDelete(queueItem.timestamp);
+        } else if (queueItem.type == "move") {
+            console.log(`dummyStorageNode: Moving file at ${queueItem.path} to ${queueItem.newPath}`);
         } else if (queueItem.type == "request") {
-            console.log(`Received request for file at ${queueItem.path}`);
+            console.log(`dummyStorageNode: Received request for file at ${queueItem.path}`);
 
             bucketQueue.initRequest(queueItem.timestamp, {
                 fileType: "file",
@@ -46,7 +48,7 @@ var dummyStorageNode = setInterval(function() {
     });
 });
 
-function performFileOperation(number) {
+function performFileCrud(number) {
     console.log(`Save file ${number}`);
     fileMgmt.saveFile(`shared:test${number}.txt`, String(number).repeat(100));
 
@@ -55,22 +57,50 @@ function performFileOperation(number) {
     return fileMgmt.loadFile(`shared:test${number}.txt`).then(function(data) {
         console.log(`Received requested file ${number}`);
         console.log(data);
-    }).then(function() {
-        setTimeout(function() {
-            console.log(`Delete file ${number}`);
-            fileMgmt.deleteFile(`shared:test${number}.txt`);
-        }, 3000);
     });
 }
 
-fileMgmt.createFolder("shared:folder")
+function performFileMove(number) {
+    console.log(`Move file ${number}`);
+    fileMgmt.moveFile(`shared:test${number}.txt`, `shared:movetest${number}.txt`);
+
+    console.log(`Request moved or copied file ${number}`);
+
+    return fileMgmt.loadFile(`shared:movetest${number}.txt`).then(function(data) {
+        console.log(`Received requested moved file ${number}`);
+        console.log(data);
+    }).then(function() {
+        setTimeout(function() {
+            console.log(`Delete requested moved file ${number}`);
+            fileMgmt.deleteFile(`shared:movetest${number}.txt`);
+        }, 1000);
+    });
+}
+
+fileMgmt.createFolder("shared:folder");
 
 var promiseChain = Promise.resolve();
 
 for (var i = 0; i < 10; i++) {
     (function(i) {
         promiseChain.then(function() {
-            return performFileOperation(i);
+            return performFileCrud(i);
+        });
+    })(i);
+}
+
+promiseChain = promiseChain.then(function() {
+    return new Promise(function(resolve, reject) {
+        setTimeout(function() {
+            resolve();
+        }, 1000);
+    });
+});
+
+for (var i = 0; i < 10; i++) {
+    (function(i) {
+        promiseChain.then(function() {
+            return performFileMove(i);
         });
     })(i);
 }
@@ -79,4 +109,4 @@ setTimeout(function() {
     clearInterval(dummyStorageNode);
 
     console.log("Ended test in given timeframe");
-}, 5000);
+}, 3000);

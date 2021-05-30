@@ -7,7 +7,7 @@
     Licensed by the LiveG Open-Source Licence, which can be found at LICENCE.md.
 */
 
-const fs = require("fs");
+const fs = require("fs-extra");
 const mkdirp = require("mkdirp");
 const os = require("os");
 const path = require("path");
