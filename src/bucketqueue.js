@@ -101,6 +101,7 @@ exports.deleteFile = function(filePath, size) {
     }
 
     exports.fileDeleteQueue = exports.fileDeleteQueue.filter((i) => i != null);
+    exports.cachedSize -= size;
 
     console.log(`Deleted file ${filePath}`);
 };
