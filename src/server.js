@@ -45,6 +45,10 @@ app.get("/bucketqueue", function(req, res) {
 });
 
 app.get("/bucketqueue/resolvecommit", authenticateStorageNode, function(req, res) {
+    bucketQueue.resolveCommit(req.params.timestamp, req.params.start, req.params.end);
+});
+
+app.get("/bucketqueue/resolvefoldercommit", authenticateStorageNode, function(req, res) {
     bucketQueue.resolveCommit(req.params.timestamp);
 });
 

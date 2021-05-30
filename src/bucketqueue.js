@@ -14,9 +14,12 @@ const mkdirp = require("mkdirp");
 var config = require("./config");
 
 const MAX_BUCKET_CACHE_SIZE = config.data.maxBucketCacheSize || 8 * 1024 * 1024 * 1024; // 8 GiB default
-const MAX_EVICTION_QUEUE_TIME = config.data.maxEvictionQueueTime || 60 * 60 * 1000; // 1 hr default
+const MAX_COMMIT_QUEUE_TIME = config.data.maxCommitQueueTime || 60 * 60 * 1000; // 1 hr default
 const REQUEST_TIMEOUT = config.data.requestTimeout || 10 * 1000; // 10 secs default
 const QUEUE_PATH = config.resolvePath("identity:queue.bson");
+const SUBDIVISIONS_IN_TIMESTAMP = 1000;
+
+var timestampSubdivision = 0;
 
 exports.cachedFiles = [];
 exports.cachedSize = 0;
@@ -33,26 +36,28 @@ exports.requestRetrievalState = {
     ERR_NOT_FOUND: -1
 };
 
+// Used to uniquely identify timestamps from one another, in case of split-millisecond operations
+function getSubdividedTimestamp() {
+    return new Date().getTime() + (((timestampSubdivision++) % SUBDIVISIONS_IN_TIMESTAMP) / SUBDIVISIONS_IN_TIMESTAMP);
+}
+
 // Called when space is needed, and so files in cache need to be evicted
-exports.evictFiles = function(spaceToReserve) {
+// Leave `spaceToReserve` as `0` to clean up committed files
+exports.evictFiles = function(spaceToReserve = 0) {
     while (exports.cachedFiles.length > 0) {
         if (exports.cachedSize < MAX_BUCKET_CACHE_SIZE - spaceToReserve) {
             break;
         }
 
         exports.cachedSize -= exports.cachedFiles[0].size;
-        exports.fileCommitQueue = exports.fileCommitQueue.filter((i) => i.path != exports.cachedFiles[0].path);
-
-        exports.cachedFiles[0].alreadyCommittedOnce = false;
-        exports.cachedFiles[0].timestamp = new Date().getTime();
 
         console.log(`Evicted file ${exports.cachedFiles[0].path}`);
 
-        exports.fileCommitQueue.push(exports.cachedFiles.shift());
+        exports.cachedFiles.shift();
     }
 
     for (var i = 0; i < exports.fileCommitQueue.length; i++) {
-        if (exports.fileCommitQueue[i].alreadyCommittedOnce && exports.fileCommitQueue[i].timestamp < new Date().getTime() - MAX_EVICTION_QUEUE_TIME) {
+        if (exports.fileCommitQueue[i].alreadyCommittedOnce && exports.fileCommitQueue[i].timestamp < new Date().getTime() - MAX_COMMIT_QUEUE_TIME) {
             var pathToRemove = config.resolvePath(exports.fileCommitQueue[i].path);
 
             if (fs.existsSync(pathToRemove)) {
@@ -85,11 +90,11 @@ exports.deleteFile = function(filePath, size) {
     exports.fileDeleteQueue.push({
         path: filePath,
         size,
-        timestamp: new Date().getTime
+        timestamp: getSubdividedTimestamp()
     });
 
     for (var i = 0; i < exports.fileDeleteQueue.length; i++) {
-        if (exports.fileDeleteQueue[i].alreadyCommittedOnce && exports.fileDeleteQueue[i].timestamp < new Date().getTime() - MAX_EVICTION_QUEUE_TIME) {
+        if (exports.fileDeleteQueue[i].alreadyCommittedOnce && exports.fileDeleteQueue[i].timestamp < new Date().getTime() - MAX_COMMIT_QUEUE_TIME) {
             exports.queueMinTimestamp = exports.fileDeleteQueue[i].timestamp; // So long as storage node has files newer than this time, they're working
             exports.fileDeleteQueue[i] = null; // Remove if certain that all storage nodes have committed this file
         }
@@ -138,7 +143,7 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
     var request = {
         path: filePath,
         fileType: null,
-        timestamp: new Date().getTime(),
+        timestamp: getSubdividedTimestamp(),
         state: exports.requestRetrievalState.UNFULFILLED,
         bytesTransferred: 0,
         bytesTotal: null,
@@ -152,7 +157,7 @@ exports.requestFile = function(filePath, txCallback = function() {}) {
         var requestStatePoller = setInterval(function() {
             var requestIndex = exports.filesToRequest.indexOf(request);
 
-            if (lastTransferTime.getTime() < new Date().getTime() - REQUEST_TIMEOUT) {
+            if (lastTransferTime.getTime() < getSubdividedTimestamp() - REQUEST_TIMEOUT) {
                 request.state = exports.requestRetrievalState.ERR_NOT_FOUND; // No response, so mark as not found
             }
 
@@ -234,10 +239,13 @@ exports.cacheFile = function(filePath, size) {
         fileType: "file",
         path: filePath,
         size,
-        timestamp: new Date().getTime
+        timestamp: getSubdividedTimestamp(),
+        alreadyCommittedOnce: false
     });
 
     exports.cachedSize += size;
+
+    exports.fileCommitQueue.push(exports.cachedFiles[exports.cachedFiles.length - 1]);
 
     console.log(`Cached file ${filePath}`);
 };
@@ -255,8 +263,10 @@ exports.cacheFolder = function(filePath) {
         fileType: "folder",
         path: filePath,
         size: 0,
-        timestamp: new Date().getTime
+        timestamp: getSubdividedTimestamp()
     });
+
+    exports.fileCommitQueue.push(exports.cachedFiles[exports.cachedFiles.length - 1]);
 
     console.log(`Cached folder ${filePath}`);
 };
@@ -291,12 +301,19 @@ exports.mergeQueues = function() {
     var mergedQueue = [];
 
     for (var i = 0; i < exports.fileCommitQueue.length; i++) {
-        mergedQueue.push({
-            type: "commit",
-            fileType: exports.fileCommitQueue[i].fileType,
-            path: exports.fileCommitQueue[i].path,
-            timestamp: exports.fileCommitQueue[i].timestamp
-        });
+        if (fs.existsSync(config.resolvePath(exports.fileCommitQueue[i].path))) {
+            mergedQueue.push({
+                type: "commit",
+                fileType: exports.fileCommitQueue[i].fileType,
+                path: exports.fileCommitQueue[i].path,
+                timestamp: exports.fileCommitQueue[i].timestamp,
+                size: (
+                    exports.fileCommitQueue[i].fileType == "file" ?
+                    fs.statSync(config.resolvePath(exports.fileCommitQueue[i].path)).size :
+                    0
+                )
+            });
+        }
     }
 
     for (var i = 0; i < exports.fileDeleteQueue.length; i++) {
@@ -332,11 +349,29 @@ exports.getFromQueueAtTimestamp = function(queue, timestamp) {
     return null; // May already have been performed
 };
 
-exports.resolveCommit = function(timestamp) {
+exports.resolveCommit = function(timestamp, start, end) {
     var item = exports.getFromQueueAtTimestamp(exports.fileCommitQueue, timestamp);
 
     if (item == null) {
-        return; // Has been since removed
+        return new ArrayBuffer(0);
+    }
+
+    var data = fs.readFileSync(config.resolvePath(item.path)).slice(start, end);
+
+    if (end >= fs.statSync(config.resolvePath(item.path)).size) {
+        item.alreadyCommittedOnce = true;
+
+        exports.evictFiles();
+    }
+
+    return data;
+};
+
+exports.resolveFolderCommit = function(timestamp) {
+    var item = exports.getFromQueueAtTimestamp(exports.fileCommitQueue, timestamp);
+
+    if (item == null) {
+        return; // May already have been performed
     }
 
     item.alreadyCommittedOnce = true;

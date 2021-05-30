@@ -11,70 +11,72 @@ var main = require("../src/main");
 var fileMgmt = require("../src/filemgmt");
 var bucketQueue = require("../src/bucketqueue");
 
-console.log("Save file 1");
-fileMgmt.saveFile("shared:test1.txt", "1".repeat(100));
+var syncTimestamp = 0;
 
-console.log("Retrieve file 1");
-fileMgmt.loadFile("shared:test1.txt").then(function(data) {
-    console.log("Received file 1");
-    console.log(data);
+var dummyStorageNode = setInterval(function() {
+    bucketQueue.mergeQueues().forEach(function(queueItem) {
+        if (queueItem.timestamp <= syncTimestamp) {
+            return;
+        }
+
+        if (queueItem.type == "commit") {
+            if (queueItem.fileType == "file") {
+                console.log(`Saving file at ${queueItem.path}: length ${queueItem.size}`);
+                console.log(bucketQueue.resolveCommit(queueItem.timestamp, 0, queueItem.size));
+            } else {
+                console.log(`Saving folder at ${queueItem.path}`);
+                bucketQueue.resolveFolderCommit(queueItem.timestamp);
+            }
+        } else if (queueItem.type == "delete") {
+            console.log(`Deleting file at ${queueItem.path}`);
+
+            bucketQueue.resolveDelete(queueItem.timestamp);
+        } else if (queueItem.type == "request") {
+            console.log(`Received request for file at ${queueItem.path}`);
+
+            bucketQueue.initRequest(queueItem.timestamp, {
+                fileType: "file",
+                bytesTotal: queueItem.path.length
+            });
+
+            bucketQueue.txRequestData(queueItem.timestamp, new TextEncoder().encode(queueItem.path), 0);
+        }
+
+        syncTimestamp = queueItem.timestamp;
+    });
 });
 
-console.log("Save file 2");
-fileMgmt.saveFile("shared:test2.txt", "2".repeat(100));
+function performFileOperation(number) {
+    console.log(`Save file ${number}`);
+    fileMgmt.saveFile(`shared:test${number}.txt`, String(number).repeat(100));
 
-console.log("Get queue");
-console.log(bucketQueue.mergeQueues());
+    console.log(`Request file ${number}`);
 
-console.log("Resolve saved file 2");
-bucketQueue.resolveCommit(bucketQueue.mergeQueues()[0]?.timestamp);
+    return fileMgmt.loadFile(`shared:test${number}.txt`).then(function(data) {
+        console.log(`Received requested file ${number}`);
+        console.log(data);
+    }).then(function() {
+        setTimeout(function() {
+            console.log(`Delete file ${number}`);
+            fileMgmt.deleteFile(`shared:test${number}.txt`);
+        }, 3000);
+    });
+}
 
-console.log("Get queue");
-console.log(bucketQueue.mergeQueues());
+fileMgmt.createFolder("shared:folder")
 
-console.log("Retrieve file 2");
-fileMgmt.loadFile("shared:test2.txt").then(function(data) {
-    console.log("Received file 2");
-    console.log(data);
-});
+var promiseChain = Promise.resolve();
 
-console.log("Get queue");
-console.log(bucketQueue.mergeQueues());
+for (var i = 0; i < 10; i++) {
+    (function(i) {
+        promiseChain.then(function() {
+            return performFileOperation(i);
+        });
+    })(i);
+}
 
-console.log("Tx file 2 to fulfil request");
-bucketQueue.initRequest(bucketQueue.mergeQueues()[1]?.timestamp, {
-    fileType: "file",
-    bytesTotal: 100
-});
+setTimeout(function() {
+    clearInterval(dummyStorageNode);
 
-bucketQueue.txRequestData(
-    bucketQueue.mergeQueues()[1]?.timestamp,
-    new Uint16Array(100).fill("2".charCodeAt(0)),
-    0
-);
-
-console.log("Get queue");
-console.log(bucketQueue.mergeQueues());
-
-console.log("Create empty folder and child folder");
-fileMgmt.createFolder("shared:empty/subfolder");
-
-console.log("Get queue");
-console.log(bucketQueue.mergeQueues());
-
-console.log("Check existence of folder");
-fileMgmt.checkFileExists("shared:empty").then(function(type) {
-    console.log("Checked existence");
-    console.log(type);
-}).catch(function() {
-    console.error("Does not exist");
-});
-
-console.log("Get queue");
-console.log(bucketQueue.mergeQueues());
-
-console.log("Respond existence");
-bucketQueue.initRequest(bucketQueue.mergeQueues()[2]?.timestamp, {
-    fileType: "folder",
-    bytesTotal: 0
-});
+    console.log("Ended test in given timeframe");
+}, 5000);

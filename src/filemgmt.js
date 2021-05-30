@@ -101,16 +101,24 @@ exports.saveStruct = function(structInstance) {
 
 // Works for structs and folders too
 exports.deleteFile = function(filePath) {
-    var fileStats = fs.statSync(config.resolvePath(filePath));
+    if (fs.existsSync(config.resolvePath(filePath))) {
+        var fileStats = fs.statSync(config.resolvePath(filePath));
 
-    if (fileStats.isDirectory()) {
-        fs.rmdirSync(config.resolvePath(filePath), {recursive: true});
-    } else {
-        fs.rmSync(config.resolvePath(filePath));
+        if (fileStats.isDirectory()) {
+            fs.rmdirSync(config.resolvePath(filePath), {recursive: true});
+        } else {
+            fs.rmSync(config.resolvePath(filePath));
+        }
+
+        if (shouldBeCached(filePath)) {
+            bucketQueue.deleteFile(filePath, fileStats.size);
+        }
+
+        return;
     }
 
     if (shouldBeCached(filePath)) {
-        bucketQueue.deleteFile(filePath, fileStats.size);
+        bucketQueue.deleteFile(filePath, 0);
     }
 };
 
