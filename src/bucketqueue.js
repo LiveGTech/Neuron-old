@@ -104,6 +104,12 @@ exports.deleteFile = function(filePath, size) {
     exports.fileDeleteQueue = exports.fileDeleteQueue.filter((i) => i != null);
     exports.cachedSize -= size;
 
+    for (var i = 0; i < exports.cachedFiles.length; i++) {
+        if (exports.cachedFiles[i].path.startsWith(filePath.endsWith("/") ? filePath : (filePath + "/"))) {
+            exports.cachedSize -= exports.cachedFiles[i].size; // If we're deleting a folder, then delete its contents too
+        }
+    }
+
     console.log(`Deleted file ${filePath}`);
 };
 
