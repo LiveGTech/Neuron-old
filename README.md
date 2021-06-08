@@ -1,5 +1,7 @@
-# Neuron
+# Neuron (Old)
 Backend system for storing documents and data under LiveG Accounts.
+
+> **Note:** This repo is deprecated as we're redesigning Neuron to be peer-to-peer. [Take a look at our new repo!](https://github.com/LiveGTech/Neuron)
 
 Licenced by the [LiveG Open-Source Licence](LICENCE.md).
 
