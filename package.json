@@ -8,7 +8,7 @@
         "neuron": "src/main.js"
     },
     "dependencies": {
-        "bson": "^4.3.0",
+        "bson": "^4.6.1",
         "crypto-js": "^4.0.0",
         "express": "^4.17.1",
         "fs-extra": "^10.0.0",
